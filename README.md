@@ -62,3 +62,7 @@ Everything here is PAL-only. The US PS2 release, Wii and Xbox 360 versions have 
 ## Credits
 
 Research and testing by Glitch_Me_Up, with reverse-engineering help from Claude.
+
+## Licence
+
+The tools, patches and documentation in this repository are released under the [MIT License](LICENSE). Looney Tunes: Acme Arsenal and its data belong to their respective owners and are not included.
