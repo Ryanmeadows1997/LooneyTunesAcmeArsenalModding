@@ -1,0 +1,10 @@
+# Never commit game data
+*.iso
+*.ISO
+*.PAK
+*.pak
+SLES_*
+SYSTEM.CNF
+*.p2s
+extracted/
+__pycache__/
