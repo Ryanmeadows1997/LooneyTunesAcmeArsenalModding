@@ -178,3 +178,30 @@ dt_hook:
         .globl g_gate
 g_gate: .space 4
         .text
+
+# u32 gcall5(u32 fn, u32 a0, u32 a1, u32 a2, u32 a3, u32 t0): like gcall, for game functions
+# taking up to five integer arguments (EABI passes the fifth in $t0).
+        .text
+        .globl gcall5
+gcall5:
+        lw    $t1, 16($sp)
+        lw    $t2, 20($sp)
+        addiu $sp, $sp, -16
+        sw    $ra, 0($sp)
+        sw    $s0, 4($sp)
+        move  $s0, $sp
+        addiu $t3, $zero, -16
+        and   $sp, $sp, $t3
+        addiu $sp, $sp, -64
+        move  $t9, $a0
+        move  $a0, $a1
+        move  $a1, $a2
+        move  $a2, $a3
+        move  $a3, $t1
+        jalr  $t9
+        move  $t0, $t2
+        move  $sp, $s0
+        lw    $ra, 0($sp)
+        lw    $s0, 4($sp)
+        jr    $ra
+        addiu $sp, $sp, 16

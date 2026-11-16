@@ -8,6 +8,7 @@ typedef unsigned char u8;
 
 /* ---- game functions ---- */
 u32 gcall(u32 fn, u32 a0, u32 a1, u32 a2);
+u32 gcall5(u32 fn, u32 a0, u32 a1, u32 a2, u32 a3, u32 t0);
 #define G(fn, a, b, c) gcall((fn), (u32)(a), (u32)(b), (u32)(c))
 #define text_system()       ((void *)G(0x392ED4, 0, 0, 0))
 #define text_create(s)      ((void *)G(0x2E3B50, s, 0, 0))
@@ -195,7 +196,7 @@ static void hide_loading(void)
 
 /* ---- deferred actions: run from the state manager hook, outside rendering ---- */
 enum { ACT_NONE, ACT_WARP, ACT_PREVIEWER, ACT_INV_ON, ACT_INV_OFF, ACT_KILL, ACT_POWER_UP, ACT_POWER_DOWN,
-       ACT_INVIS_ON, ACT_INVIS_OFF };
+       ACT_INVIS_ON, ACT_INVIS_OFF, ACT_FINISH, ACT_RESTART };
 static u32 g_action;
 static u32 g_action_entity;
 
@@ -266,6 +267,8 @@ static const Item kLevels[] = {
     { "Level warp",          K_ACTION, ACT_WARP,      0, 0, 0, 0, "Developer level select (every level)" },
     { "Character Previewer", K_ACTION, ACT_PREVIEWER, 0, 0, 0, 0, "Developer model/animation viewer" },
     { "Unlock all levels",   K_TOGGLE, T_UNLOCK,      0, 0, 0, 0, "Every level in the main menu's level select" },
+    { "Finish level",        K_ACTION, ACT_FINISH,    0, 0, 0, 0, "End the current level as completed" },
+    { "Restart level",       K_ACTION, ACT_RESTART,   0, 0, 0, 0, "Levels started from the developer level select" },
 };
 static const Item kVisual[] = {
     { "Wireframe",           K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
@@ -313,6 +316,11 @@ static void activate(const Item *it)
         show_loading(it->arg == ACT_WARP ? "Loading level select..." : "Loading previewer...");
         g_pending = it->arg;
         g_pending_wait = 3;          /* let a few frames draw the message before the switch */
+        return;
+    case ACT_FINISH:
+    case ACT_RESTART:
+        request(it->arg);
+        close_menu();
         return;
     case ACT_KILL: case ACT_POWER_UP: case ACT_POWER_DOWN:
         if (!g_entity) { g_status = "No player here"; return; }
@@ -413,6 +421,48 @@ static void unlock_levels(u32 mgr)
     }
 }
 
+#define PLAY_STATE_VTABLE   0x47CAE8
+#define HUB_STATE_VTABLE    0x47C59C
+#define GAME_RESULT         0x146650    /* (game) -> result: +0xB4 ended, +0xB5 failed */
+#define HUB_START_LEVEL     0x12CF30    /* (hub, mgr, chapter, act, profile) */
+
+static u32 find_state(u32 mgr, u32 vtable)
+{
+    u32 n = RD32(mgr + 4);
+    if (n > 32) return 0;
+    for (u32 i = n; i-- > 0;) {
+        u32 st = RD32(mgr + 8 + i * 4);
+        if (valid(st) && RD32(st + 0x18) == vtable) return st;
+    }
+    return 0;
+}
+
+static const char *g_flow_msg;   /* shown after a finish/restart attempt fails */
+
+static void finish_level(u32 mgr)
+{
+    u32 play = find_state(mgr, PLAY_STATE_VTABLE);
+    if (!play) { g_flow_msg = "Not in a level"; return; }
+    u32 game = RD32(play + 0x30);
+    if (!valid(game)) return;
+    u32 res = G(GAME_RESULT, game, 0, 0);
+    if (!valid(res)) return;
+    *(volatile u8 *)(res + 0xB4) = 1;     /* ended */
+    *(volatile u8 *)(res + 0xB5) = 0;     /* not failed */
+    G(MGR_POP_TO, mgr, play, 0);
+    G(0x1016B8, mgr, play, 0);            /* remove the play state; the level flow carries on */
+}
+
+static void restart_level(u32 mgr)
+{
+    u32 hub = find_state(mgr, HUB_STATE_VTABLE);
+    if (!hub) { g_flow_msg = "Restart needs a level started from the level select"; return; }
+    u32 chapter = RD32(hub + 0x3C), act = RD32(hub + 0x38);
+    if (!valid(chapter) || !valid(act)) return;
+    G(MGR_POP_TO, mgr, hub, 0);
+    gcall5(HUB_START_LEVEL, hub, mgr, chapter + 8, act + 8, 0);
+}
+
 void mgr_tick(u32 mgr)
 {
     if (g_unlock_levels) unlock_levels(mgr);
@@ -423,6 +473,8 @@ void mgr_tick(u32 mgr)
     switch (act) {
     case ACT_WARP:      switch_state(mgr, parse_once(g_doc_hub, &g_node_hub, kHubXml)); return;
     case ACT_PREVIEWER: switch_state(mgr, parse_once(g_doc_prev, &g_node_prev, kPreviewerXml)); return;
+    case ACT_FINISH:    finish_level(mgr); return;
+    case ACT_RESTART:   restart_level(mgr); return;
     }
     if (!valid(ent) || ent != g_entity)     /* player changed since the request: skip */
         return;
@@ -534,7 +586,7 @@ void menu_tick(void *sys)
 
     if ((pad & (B_L3 | B_R3)) == (B_L3 | B_R3) && (hit & (B_L3 | B_R3))) {
         if (g_open) close_menu();
-        else { open_menu(); g_status = 0; }
+        else { open_menu(); g_status = g_flow_msg; g_flow_msg = 0; }
         g_block_input = g_open;
         update_info();
         return;
