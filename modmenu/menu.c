@@ -208,6 +208,61 @@ static u32 g_invisible, g_invis_entity;
 static u32 g_unlock_levels;
 u32 g_hide_hud;                    /* read by hud_hook */
 
+/* ---- wireframe ----
+ * Every model's vertex batches live in RAM as VIF streams that VU1 runs through. Each batch
+ * starts with an UNPACK (VIF code 0x6C) whose first quadword is the GIF tag VU1 kicks to the GS
+ * with the vertices. The game only uses two: triangle lists (PRIM 3, 9 regs: ST RGBAQ XYZ2 x3)
+ * and triangle strips (PRIM 4, 3 regs). Switching their PRIM to line strip (2) draws edges only.
+ * Bits 32..45 of a GIF tag are unused, so a marker bit there remembers what to put back. */
+#define WF_TRI        0x9001C000u      /* tag bits 32..63: NREG 9, PRIM 3, PRE */
+#define WF_TRI_REGS   0x12512512u
+#define WF_STRIP      0x30024000u      /* NREG 3, PRIM 4, PRE */
+#define WF_STRIP_REGS 0x00000512u
+#define WF_TRI_LINES   0x90014001u     /* PRIM 2 + marker */
+#define WF_STRIP_LINES 0x30014002u
+#define WF_LO   0x00400000u            /* heap: everything after the executable */
+#define WF_HI   0x02000000u
+#define WF_STEP 0x00040000u            /* background sweep per frame (catches newly loaded models) */
+static u32 g_wireframe, g_wf_applied, g_wf_cursor;
+
+static void wf_put(u32 a, u32 v)
+{
+    RD32(a) = v;
+    RD32(a | 0x20000000) = v;          /* uncached copy too: DMA reads RAM, not the data cache */
+}
+
+static void wf_sweep(u32 from, u32 to, u32 on)
+{
+    for (u32 a = from; a < to; a += 4) {
+        u32 w = RD32(a), nv, regs;
+        if (on) {
+            if (w == WF_TRI)        { nv = WF_TRI_LINES;   regs = WF_TRI_REGS; }
+            else if (w == WF_STRIP) { nv = WF_STRIP_LINES; regs = WF_STRIP_REGS; }
+            else continue;
+        } else {
+            if (w == WF_TRI_LINES)        { nv = WF_TRI;   regs = WF_TRI_REGS; }
+            else if (w == WF_STRIP_LINES) { nv = WF_STRIP; regs = WF_STRIP_REGS; }
+            else continue;
+        }
+        if (RD32(a + 4) != regs || ((RD32(a - 8) >> 24) & 0x7F) != 0x6C) continue;
+        wf_put(a, nv);
+    }
+}
+
+static void wireframe_tick(void)
+{
+    if (g_wireframe != g_wf_applied) {          /* switched: do all of RAM now */
+        wf_sweep(WF_LO, WF_HI, g_wireframe);
+        g_wf_applied = g_wireframe;
+        g_wf_cursor = WF_LO;
+        return;
+    }
+    if (!g_wireframe) return;
+    wf_sweep(g_wf_cursor, g_wf_cursor + WF_STEP, 1);
+    g_wf_cursor += WF_STEP;
+    if (g_wf_cursor >= WF_HI) g_wf_cursor = WF_LO;
+}
+
 /* ---- level timer: game time while a level is drawing, reset when a new level starts ---- */
 static u32 g_timer_on, g_timer_frames, g_timer_state;
 static void *g_timer_el;
@@ -248,7 +303,7 @@ typedef struct {
     const char *help;
 } Item;
 
-enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE, T_HUD, T_TIMER };
+enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE, T_HUD, T_TIMER, T_WIRE };
 
 static const Item kPlayer[] = {
     { "Invincible",         K_TOGGLE, T_INV,   0, 0, 0, 0, "Bugs takes no damage" },
@@ -282,7 +337,7 @@ static const Item kLevels[] = {
 };
 static const Item kVisual[] = {
     { "Hide HUD",            K_TOGGLE, T_HUD, 0, 0, 0, 0, "Health and power bars off, for clean screenshots" },
-    { "Wireframe",           K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
+    { "Wireframe",           K_TOGGLE, T_WIRE, 0, 0, 0, 0, "Draw the world and characters as lines" },
     { "Collision hitboxes",  K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
 };
 
@@ -306,6 +361,7 @@ static u32 *toggle_ptr(u32 id)
     case T_PAUSE: return &g_paused;
     case T_HUD: return &g_hide_hud;
     case T_TIMER: return &g_timer_on;
+    case T_WIRE: return &g_wireframe;
     default: return &g_info_on;
     }
 }
@@ -507,6 +563,7 @@ static void restart_level(u32 mgr, u32 profile)
 void mgr_tick(u32 mgr)
 {
     if (g_unlock_levels) unlock_levels(mgr);
+    wireframe_tick();
     u32 act = g_action;
     u32 ent = g_action_entity;
     g_action = 0;
