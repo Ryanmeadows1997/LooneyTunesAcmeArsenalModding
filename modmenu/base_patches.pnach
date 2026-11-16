@@ -1,0 +1,65 @@
+gametitle=Looney Tunes - ACME Arsenal (PAL-M) [SLES-54931] CRC 91C2DF01
+
+// Acme Arsenal dev content patches by Glitch_Me_Up.
+// Only enable ONE "Boot:" patch at a time.
+// Both swap the BootSequence name the game looks up in GAMEDATA\BOOT\BOOT.XML
+// ("LooneyTunes Release", stored at 0x004DF348) for one of the unused sequences.
+
+[Boot: Development (skip straight to Hub)]
+author=Glitch_Me_Up
+description=Boots the unused "LooneyTunes Development" sequence: no splash screens or main menu, loads directly into the Hub.
+patch=1,EE,004DF348,word,6E6F6F4C
+patch=1,EE,004DF34C,word,75547965
+patch=1,EE,004DF350,word,2073656E
+patch=1,EE,004DF354,word,65766544
+patch=1,EE,004DF358,word,6D706F6C
+patch=1,EE,004DF35C,word,00746E65
+
+[Boot: Character Previewer (restored)]
+author=Glitch_Me_Up
+description=Boots the unused developer Character Previewer and fixes the three retail bugs that broke it: (1) waits for DDF_PAK.PAK before listing actors, (2) marks the previewer's scene tree as built so characters are actually drawn, (3) uses a point light (type 2) because the PS2 renderer ignores the spotlight it was given. Up/Down to choose, Cross to select, Triangle to go back.
+// String swap: "LooneyTunes Release" -> "Character Previewer"
+patch=1,EE,004DF348,word,72616843
+patch=1,EE,004DF34C,word,65746361
+patch=1,EE,004DF350,word,72502072
+patch=1,EE,004DF354,word,65697665
+patch=1,EE,004DF358,word,00726577
+patch=1,EE,004DF35C,word,00000000
+// Fix 1: wait for DDF_PAK.PAK to load before building the actor list.
+// Hook 0x151964 -> code cave in unused padding at 0x453E20; polls kDDFSystem (vtable +0x20), max 8M tries.
+patch=0,EE,00151964,word,08114F88
+patch=0,EE,00453E20,word,1040000F
+patch=0,EE,00453E24,word,3C110080
+patch=0,EE,00453E28,word,0C0E9BEF
+patch=0,EE,00453E2C,word,00000000
+patch=0,EE,00453E30,word,8C44000C
+patch=0,EE,00453E34,word,24840020
+patch=0,EE,00453E38,word,84860000
+patch=0,EE,00453E3C,word,8C870004
+patch=0,EE,00453E40,word,00E0F809
+patch=0,EE,00453E44,word,00462021
+patch=0,EE,00453E48,word,14400003
+patch=0,EE,00453E4C,word,2631FFFF
+patch=0,EE,00453E50,word,1620FFF5
+patch=0,EE,00453E54,word,00000000
+patch=0,EE,00453E58,word,0805465B
+patch=0,EE,00453E5C,word,3C06004E
+patch=0,EE,00453E60,word,0805467E
+patch=0,EE,00453E64,word,00000000
+// Fix 2: right after the previewer world is created (hook 0x151CEC), set the scene-tree root
+// bounds to (0,0,0) size 1024 and set the tree's "built" flag (tree+0x78) so new objects are
+// inserted into the tree instead of waiting forever in its pending list (tree+0x74). Code at 0x000FFF00.
+patch=1,EE,000FFF00,word,AE02002C
+patch=1,EE,000FFF04,word,8C480038
+patch=1,EE,000FFF08,word,3C094480
+patch=1,EE,000FFF0C,word,340A0001
+patch=1,EE,000FFF10,word,AD000030
+patch=1,EE,000FFF14,word,AD000034
+patch=1,EE,000FFF18,word,AD000038
+patch=1,EE,000FFF1C,word,AD09003C
+patch=1,EE,000FFF20,word,03E00008
+patch=1,EE,000FFF24,word,A10A0078
+patch=0,EE,00151CEC,word,0C03FFC0
+// Fix 3: create the light as type 2 (point) instead of 3 (spot), intensity 3.0.
+patch=0,EE,00151ECC,word,34040002
+patch=0,EE,00151EEC,word,3C044040

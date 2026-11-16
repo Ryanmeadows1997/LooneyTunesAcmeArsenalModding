@@ -8,3 +8,12 @@ SYSTEM.CNF
 *.p2s
 extracted/
 __pycache__/
+# mod menu build outputs
+modmenu/*.o
+modmenu/*.elf
+modmenu/*.bin
+modmenu/modmenu.pnach
+modmenu/hubfix/*.o
+modmenu/hubfix/*.elf
+modmenu/hubfix/*.bin
+modmenu/hubfix/hubgrid.pnach

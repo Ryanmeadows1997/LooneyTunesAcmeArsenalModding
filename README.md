@@ -22,6 +22,7 @@ This repository contains **no game data**. You need your own copy of the game.
 | [`patches/SLES-54931_91C2DF01.pnach`](patches/SLES-54931_91C2DF01.pnach) | PCSX2 patches |
 | [`tools/acme_pak.py`](tools/acme_pak.py) | list/extract `.PAK` archives |
 | [`tools/acme_dev_restore.py`](tools/acme_dev_restore.py) | patches a copy of your ISO to restore the Test Level |
+| [`modmenu/`](modmenu) | source for the in-game mod menu (C + MIPS assembly) |
 
 The tools need Python 3 and nothing else.
 
@@ -34,6 +35,22 @@ The tools need Python 3 and nothing else.
 3. Boot the game.
 
 Fully close and reboot the game after changing which patch is ticked.
+
+## Mod menu
+
+Tick **Mod menu (L3+R3)** in PCSX2's cheat list, then press **L3 + R3** (click both sticks) in game. The game doesn't see your buttons while the menu is open.
+
+- D-pad Up/Down to choose, **Cross** to select, D-pad Left/Right to switch page (or change a slider)
+- **PLAYER**: invincibility, weapon power up/down, kill/respawn, info overlay (position and speed)
+- **CAMERA**: free camera (sticks fly/look, R1/L1 up/down, R2 fast, L2 slow), field of view, draw distance, save/return to a camera spot
+- **LEVELS**: level warp (opens the developer level select from anywhere), Character Previewer
+- **VISUAL**: wireframe and collision display (in progress)
+
+Most of the player options call the developers' own debug handlers, which are still in the retail game. The menu also fixes the developer level select's layout so all 14 chapters are visible.
+
+### Building it
+
+Needs `clang`, `ld.lld`, `llvm-objcopy` (LLVM with the MIPS target) and Python 3. Run `modmenu/build.sh`; it rebuilds `patches/SLES-54931_91C2DF01.pnach`.
 
 ## Restoring the Test Level
 

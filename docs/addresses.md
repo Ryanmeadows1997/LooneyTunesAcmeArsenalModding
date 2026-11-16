@@ -71,3 +71,36 @@ Tree fields: `+0x20` root node (bounds at root `+0x10`, objects at `+0x20`, chil
 |---|---|---|
 | `0x453E20` | 96 bytes | zero padding between `.text` and `.data`; nothing references it |
 | `0x000FFF00` | | low RAM below the game, the usual cheat-code area |
+| `0x000C0000` | ~16 KB | mod menu code and constants (`modmenu/`) |
+| `0x000E0000` | | mod menu variables (zero-initialised RAM, never patched) |
+
+## Mod menu hooks and game functions it uses
+
+Low RAM `0x95070`–`0xFFE40` is unused in every save state checked, so the menu lives there.
+
+| Address | What |
+|---|---|
+| `0x2E33F0` | text system draw (hooked: menu runs once per frame) |
+| `0x145670` | play-state draw (hooked: remembers the state, applies free camera / FOV) |
+| `0x101160` | state manager transition processing (hooked: safe point for state switches and player actions) |
+| `0x317480` | PS2 controller update (hooked: hides input from the game while the menu / free camera is active) |
+| `0x8385C8` | libpad2 socket table; socket 0 DMA buffer pointer at `+0x10`, two `0x80`-byte halves, counter `+0x7C`, buttons `+0x1C` (active-low), sticks `+0x1E` (rx, ry, lx, ly) |
+| `0x392ED4` | text system getter |
+| `0x2E3B50` / `0x2E3B70` / `0x2E3D30` | create / destroy / update text element. Element: `+0x00` RGBA floats, `+0x18` kString, `+0x20` x, `+0x24` y (0–1 screen units), `+0x28` scale, `+0x2C` visible |
+| `0x2F5540` / `0x2F5610` / `0x2F55A0` | kString from C string / assign / free |
+| `0x47B040` | global app pointer; state manager at app `+0x40` (stack count `+4`, entries `+8`) |
+| `0x101750` / `0x101568` | state manager pop-to (0 = pop all) / push |
+| `0x101E58` | create game state from an XML `<GameState>` node |
+| `0x307C00` / `0x30B7F8` / `0x305758` | TiXmlDocument ctor / Parse / RootElement |
+| `0x146660` | get player (`game = state+0x30`) -> aiPlayer; entity base = aiPlayer `- 0x510`, position at entity `+0x20` |
+| `0x2434D8` / `0x243508` / `0x243530` | debug handlers: invincibility on / off, commit suicide (`this` = entity) |
+| `0x2B0480` / `0x2B04D0` | debug handlers: power up / down (`this` = entity `+0x5D0`) |
+| `0x12BED8` | developer level select: chapter slot -> screen position (replaced: 3x5 grid) |
+
+Active camera: `game+0x30` vtable `+0x48` (player index) -> camera. Camera `+0x70` position, `+0x80` up, `+0x90` forward, `+0xA0` right, `+0xB0` FOV (radians), `+0xC0` far clip. World is Z-up.
+
+### EE FPU quirks the build works around
+
+- Only `C.F`, `C.EQ`, `C.LT`, `C.LE` exist; clang's unordered compares (`c.ult.s` etc.) are rewritten to the ordered forms.
+- `SQRT.S` reads its operand from the `ft` field, not `fs`; the build moves it.
+- No `trunc.w.s`; float-to-int conversion is done from the bit pattern in C.
