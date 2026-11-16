@@ -575,12 +575,15 @@ static void update_info(void)
     set_text(g_info, g_info_shown, g_info_line);
 }
 
-static void update_timer(u32 st)
+static void update_timer(u32 st, u32 counting)
 {
-    /* counts frames in which a level was drawn and the game wasn't paused, scaled by game speed */
-    if (st) {
+    /* Counts frames in which a level was drawn and the game wasn't paused, scaled by game speed.
+     * Resets when a level starts: the play state wasn't drawn last frame (loading) or changed.
+     * (A restarted level can reuse the same address, so the gap is what really matters.) */
+    if (!st) g_timer_state = 0;
+    else {
         if (st != g_timer_state) { g_timer_state = st; g_timer_frames = 0; }
-        if (!g_paused) {
+        if (counting && !g_paused) {
             u32 add = 100;                       /* hundredths of a frame */
             if (g_speed_pct != 0) add = (u32)f2i(g_speed_pct);
             g_timer_frames += add;
@@ -674,7 +677,7 @@ void menu_tick(void *sys)
     }
     g_block_input = g_open;
     update_info();
-    update_timer(g_player ? g_last_play : 0);
+    update_timer(g_last_play, g_player != 0);
     if (!g_open)
         return;
 
