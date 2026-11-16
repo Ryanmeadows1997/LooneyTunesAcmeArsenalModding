@@ -267,7 +267,7 @@ static const Item kLevels[] = {
     { "Level warp",          K_ACTION, ACT_WARP,      0, 0, 0, 0, "Developer level select (every level)" },
     { "Character Previewer", K_ACTION, ACT_PREVIEWER, 0, 0, 0, 0, "Developer model/animation viewer" },
     { "Unlock all levels",   K_TOGGLE, T_UNLOCK,      0, 0, 0, 0, "Every level in the main menu's level select" },
-    { "Finish level",        K_ACTION, ACT_FINISH,    0, 0, 0, 0, "End the current level as completed" },
+    { "Finish level",        K_ACTION, ACT_FINISH,    0, 0, 0, 0, "Levels started from the developer level select" },
     { "Restart level",       K_ACTION, ACT_RESTART,   0, 0, 0, 0, "Levels started from the developer level select" },
 };
 static const Item kVisual[] = {
@@ -443,6 +443,10 @@ static void finish_level(u32 mgr)
 {
     u32 play = find_state(mgr, PLAY_STATE_VTABLE);
     if (!play) { g_flow_msg = "Not in a level"; return; }
+    if (!find_state(mgr, HUB_STATE_VTABLE)) {
+        g_flow_msg = "Finish needs a level started from the level select";
+        return;
+    }
     u32 game = RD32(play + 0x30);
     if (!valid(game)) return;
     u32 res = G(GAME_RESULT, game, 0, 0);
