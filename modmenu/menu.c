@@ -24,6 +24,10 @@ u32 gcall(u32 fn, u32 a0, u32 a1, u32 a2);
 #define PL_POWER_UP         0x2B0480    /* this = entity + 0x5D0 */
 #define PL_POWER_DOWN       0x2B04D0
 #define AIPLAYER_TO_ENTITY  0x510       /* aiPlayer sub-object -> entity base */
+#define PL_CHEAT_INVISIBLE  0x1F5C48    /* (entity, on): the retail Invisibility cheat */
+#define MENU_UNLOCK_ALL     0x111F60    /* (menuState + 0xB0): what DEVELOPER_LEVEL_UNLOCK does */
+#define MENU_STATE_VTABLE   0x47BA14    /* main menu state (vtable at state + 0x18) */
+#define APP_PTR             0x47B040    /* app; state manager at app + 0x40 */
 
 /* ---- pad (libpad2 socket 0 DMA buffer, double buffered, active-low) ---- */
 #define PAD_SOCKETS 0x008385C8
@@ -190,13 +194,16 @@ static void hide_loading(void)
 }
 
 /* ---- deferred actions: run from the state manager hook, outside rendering ---- */
-enum { ACT_NONE, ACT_WARP, ACT_PREVIEWER, ACT_INV_ON, ACT_INV_OFF, ACT_KILL, ACT_POWER_UP, ACT_POWER_DOWN };
+enum { ACT_NONE, ACT_WARP, ACT_PREVIEWER, ACT_INV_ON, ACT_INV_OFF, ACT_KILL, ACT_POWER_UP, ACT_POWER_DOWN,
+       ACT_INVIS_ON, ACT_INVIS_OFF };
 static u32 g_action;
 static u32 g_action_entity;
 
 static u32 g_invincible;
 static u32 g_inv_entity;      /* entity we last made invincible (re-apply on respawn / new level) */
 static u32 g_info_on;
+static u32 g_invisible, g_invis_entity;
+static u32 g_unlock_levels;
 
 static void request(u32 act)
 {
@@ -217,10 +224,11 @@ typedef struct {
     const char *help;
 } Item;
 
-enum { T_INV, T_FREECAM, T_INFO };
+enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK };
 
 static const Item kPlayer[] = {
     { "Invincible",         K_TOGGLE, T_INV,   0, 0, 0, 0, "Bugs takes no damage" },
+    { "Invisible",          K_TOGGLE, T_INVIS, 0, 0, 0, 0, "The retail Invisibility cheat" },
     { "Power up weapon",    K_ACTION, ACT_POWER_UP,   0, 0, 0, 0, "One weapon level up" },
     { "Power down weapon",  K_ACTION, ACT_POWER_DOWN, 0, 0, 0, 0, "One weapon level down" },
     { "Kill / respawn",     K_ACTION, ACT_KILL,       0, 0, 0, 0, "Respawn at the last checkpoint" },
@@ -236,6 +244,7 @@ static const Item kCamera[] = {
 static const Item kLevels[] = {
     { "Level warp",          K_ACTION, ACT_WARP,      0, 0, 0, 0, "Developer level select (every level)" },
     { "Character Previewer", K_ACTION, ACT_PREVIEWER, 0, 0, 0, 0, "Developer model/animation viewer" },
+    { "Unlock all levels",   K_TOGGLE, T_UNLOCK,      0, 0, 0, 0, "Every level in the main menu's level select" },
 };
 static const Item kVisual[] = {
     { "Wireframe",           K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
@@ -256,6 +265,8 @@ static u32 *toggle_ptr(u32 id)
     switch (id) {
     case T_INV: return &g_invincible;
     case T_FREECAM: return &g_freecam;
+    case T_INVIS: return &g_invisible;
+    case T_UNLOCK: return &g_unlock_levels;
     default: return &g_info_on;
     }
 }
@@ -266,6 +277,7 @@ static void activate(const Item *it)
         u32 *p = toggle_ptr(it->arg);
         *p = !*p;
         if (it->arg == T_INV) request(*p ? ACT_INV_ON : ACT_INV_OFF);
+        if (it->arg == T_INVIS) request(*p ? ACT_INVIS_ON : ACT_INVIS_OFF);
         if (it->arg == T_FREECAM && *p) close_menu();
         return;
     }
@@ -362,8 +374,20 @@ static void switch_state(u32 mgr, u32 node)
     G(MGR_PUSH, mgr, st, 0);
 }
 
+static void unlock_levels(u32 mgr)
+{
+    u32 n = RD32(mgr + 4), arr = mgr + 8;
+    if (n > 32) return;
+    for (u32 i = 0; i < n; i++) {
+        u32 st = RD32(arr + i * 4);
+        if (valid(st) && RD32(st + 0x18) == MENU_STATE_VTABLE)
+            G(MENU_UNLOCK_ALL, st + 0xB0, 0, 0);
+    }
+}
+
 void mgr_tick(u32 mgr)
 {
+    if (g_unlock_levels) unlock_levels(mgr);
     u32 act = g_action;
     u32 ent = g_action_entity;
     g_action = 0;
@@ -380,6 +404,8 @@ void mgr_tick(u32 mgr)
     case ACT_KILL:       G(PL_SUICIDE, ent, 0, 0); break;
     case ACT_POWER_UP:   G(PL_POWER_UP, ent + 0x5D0, 0, 0); break;
     case ACT_POWER_DOWN: G(PL_POWER_DOWN, ent + 0x5D0, 0, 0); break;
+    case ACT_INVIS_ON:   G(PL_CHEAT_INVISIBLE, ent, 1, 0); g_invis_entity = ent; break;
+    case ACT_INVIS_OFF:  G(PL_CHEAT_INVISIBLE, ent, 0, 0); g_invis_entity = 0; break;
     }
 }
 
@@ -451,6 +477,8 @@ void menu_tick(void *sys)
         /* keep invincibility on through respawns and new levels */
         if (g_invincible && ent && ent != g_inv_entity && !g_action)
             request(ACT_INV_ON);
+        else if (g_invisible && ent && ent != g_invis_entity && !g_action)
+            request(ACT_INVIS_ON);
     }
 
     /* deferred state switch, and removing the loading message once the new state is drawing */
