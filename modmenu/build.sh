@@ -3,6 +3,9 @@ set -e
 cd "$(dirname "$0")"
 CF="-target mipsel-none-elf -march=mips2 -mabi=32 -mhard-float -msingle-float -O2 -G0 -fno-pic -mno-abicalls -ffreestanding -fno-builtin -nostdlib -fno-jump-tables -mno-check-zero-division"
 clang $CF -c hook.S -o hook.o
+# regenerate vu/overlay.h when the game's executable is available (the committed copy is used otherwise)
+ELF="${ACME_ELF:-/mnt/user-data/uploads/Looney Tunes - Acme Arsenal (Europe) (EnFrDeEsIt)/SLES_549.31}"
+if [ -f "$ELF" ]; then python3 vu/overlay.py "$ELF"; fi
 clang $CF -fno-math-errno -c menu.c -o menu.o
 clang $CF -fno-math-errno -c freecam.c -o freecam.o
 ld.lld -T link.ld hook.o menu.o freecam.o -o menu.elf

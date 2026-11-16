@@ -229,8 +229,9 @@ u32 g_hide_hud;                    /* read by hud_hook */
  * gains fog; the unused LABEL slot becomes FOG = 0 (all fog) and FBA becomes FOGCOL, so every
  * line is drawn in the fog colour. The original PRMODE and FBA are kept in PRMODE's unused
  * upper bits so they can be put back. */
-static const char *const kWireNames[] = { "OFF", "Textured", "White" };
+static const char *const kWireNames[] = { "OFF", "Textured", "White", "Solid + white", "Solid + black" };
 static const u32 kWireColours[] = { 0, 0, 0xFFFFFF };   /* GS: 0xBBGGRR */
+#define WF_OVERLAY 3                   /* styles from here on draw the solid scene with lines on top */
 #define WF_STYLES (sizeof(kWireNames) / sizeof(kWireNames[0]))
 static u32 g_wireframe, g_wf_applied, g_wf_cursor;
 #define MAT_MARK  0xC0DE0000u
@@ -291,16 +292,55 @@ static void wf_sweep(u32 from, u32 to, u32 style)
     }
 }
 
+/* ---- solid scene + lines on top: a VU1 routine (see vu/overlay.py) ---- */
+#include "vu/overlay.h"
+#define VU1_MICRO 0x11008000u
+#define NOV_CODE  (sizeof(kOvCode) / sizeof(kOvCode[0]))
+#define NOV_SITES (sizeof(kOvSites) / sizeof(kOvSites[0]))
+static u32 g_ov_frames;
+
+static void ov_apply(u32 on, u32 black, u32 live)
+{
+    if (on) {                                   /* routine sits in micro memory no program uses */
+        for (u32 i = 0; i < NOV_CODE; i++) {
+            u32 m = VU1_MICRO + (OV_BASE + i) * 8;
+            u32 lo = i == OV_COLOUR_INDEX ? (black ? OV_BLACK : OV_WHITE) : kOvCode[i][0];
+            if (RD32(m) != lo) RD32(m) = lo;
+            if (RD32(m + 4) != kOvCode[i][1]) RD32(m + 4) = kOvCode[i][1];
+        }
+    }
+    for (u32 i = 0; i < NOV_SITES; i++) {
+        const OvSite *s = &kOvSites[i];
+        u32 want = on ? s->hooked : s->orig;
+        /* the copy the game uploads from */
+        u32 cur = RD32(s->va);
+        if (cur != want && (cur == s->orig || cur == s->hooked)) wf_put(s->va, want);
+        /* and the program loaded right now, if it's this one */
+        if (live) {
+            u32 m = VU1_MICRO + s->site * 8;
+            cur = RD32(m);
+            if (RD32(m + 8) == s->kick && cur != want && (cur == s->orig || cur == s->hooked)) RD32(m) = want;
+        }
+    }
+}
+
 static void wireframe_tick(void)
 {
-    if (g_wireframe != g_wf_applied) {          /* switched: do all of RAM now */
-        wf_sweep(WF_LO, WF_HI, g_wireframe);
-        g_wf_applied = g_wireframe;
+    u32 style = g_wireframe;
+    if (style != g_wf_applied) {                /* switched: do all of RAM now */
+        wf_sweep(WF_LO, WF_HI, style < WF_OVERLAY ? style : 0);
+        ov_apply(style >= WF_OVERLAY, style == WF_OVERLAY + 1, 1);
+        g_wf_applied = style;
         g_wf_cursor = WF_LO;
+        g_ov_frames = 0;
         return;
     }
-    if (!g_wireframe) return;
-    wf_sweep(g_wf_cursor, g_wf_cursor + WF_STEP, g_wireframe);
+    if (style >= WF_OVERLAY) {                  /* re-check now and then, in case a program reloaded */
+        if (++g_ov_frames >= 100) { g_ov_frames = 0; ov_apply(1, style == WF_OVERLAY + 1, 1); }
+        return;
+    }
+    if (!style) return;
+    wf_sweep(g_wf_cursor, g_wf_cursor + WF_STEP, style);
     g_wf_cursor += WF_STEP;
     if (g_wf_cursor >= WF_HI) g_wf_cursor = WF_LO;
 }
