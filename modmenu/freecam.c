@@ -91,33 +91,6 @@ static float stick(u8 v)
 
 static float b_x, b_y, b_z, b_yaw, b_pitch;
 
-/* Objects only switch on inside a player's activation sphere (entity+0x5C: x, y, z, radius^2;
- * Bugs' is 200 units). While the free camera is on, centre Bugs' sphere on the camera and
- * double its radius, so the scenery around the camera is active. Restored when it's turned off. */
-u32 g_fc_entity;            /* menu.c: Bugs' entity this frame */
-static u32 s_sphere;
-static float s_sphere_r2;
-
-static void sphere_follow(void)
-{
-    u32 ent = g_fc_entity;
-    u32 sp = (g_freecam && s_init && valid(ent)) ? RD32(ent + 0x5C) : 0;
-    if (!valid(sp)) sp = 0;
-    if (sp != s_sphere) {
-        if (s_sphere && valid(s_sphere) && s_sphere_r2 > 0) RDF(s_sphere + 0xC) = s_sphere_r2;  /* restore */
-        s_sphere = sp;
-        s_sphere_r2 = sp ? RDF(sp + 0xC) : 0;
-    }
-    if (!sp) return;
-    float r2 = s_sphere_r2;
-    if (r2 < 1.0f || r2 > 1.0e7f) return;
-    RDF(sp + 0x0) = s_x; RDF(sp + 0x4) = s_y; RDF(sp + 0x8) = s_z;
-    RDF(sp + 0xC) = r2 * 4.0f;
-}
-
-/* also called at the start of each game update (menu.c app_gate) */
-void freecam_pre_update(void) { sphere_follow(); }
-
 /* current free camera position (only meaningful while it's on) */
 int freecam_pos(float *out)
 {
@@ -139,7 +112,7 @@ void freecam_bookmark(int load)
 void state_tick(u32 st)
 {
     g_state = st;
-    if (!g_freecam) { s_init = 0; sphere_follow(); }
+    if (!g_freecam) s_init = 0;
     if (!g_freecam && g_fov_deg == 0 && g_far == 0) return;
     u32 cam = find_camera(st);
     if (!cam) return;
@@ -186,7 +159,6 @@ void state_tick(u32 st)
     float U[3] = { -sp * cy, -sp * sy, cp };
     float R[3] = { F[1] * U[2] - F[2] * U[1], F[2] * U[0] - F[0] * U[2], F[0] * U[1] - F[1] * U[0] };
 
-    sphere_follow();
     RDF(cam + 0x70) = s_x;  RDF(cam + 0x74) = s_y;  RDF(cam + 0x78) = s_z;
     RDF(cam + 0x80) = U[0]; RDF(cam + 0x84) = U[1]; RDF(cam + 0x88) = U[2];
     RDF(cam + 0x90) = F[0]; RDF(cam + 0x94) = F[1]; RDF(cam + 0x98) = F[2];

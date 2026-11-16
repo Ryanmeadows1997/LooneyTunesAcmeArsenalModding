@@ -55,8 +55,7 @@ u32 pad_raw(u8 *sticks)
 }
 
 /* shared with freecam.c */
-extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live, g_fc_entity;
-void freecam_pre_update(void);
+extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live;
 extern float g_fov_deg, g_far;          /* 0 = leave the game's value */
 void freecam_bookmark(int load);
 int freecam_pos(float *out);
@@ -223,7 +222,6 @@ u32 g_dtscale;                     /* float bits read by dt_hook; 0 = unscaled *
 
 u32 app_gate(u32 app)
 {
-    freecam_pre_update();
     if (!g_paused) return 1;
     if (g_step) { g_step--; return 1; }
     /* paused: still let state changes (and the menu's deferred actions) happen */
@@ -661,7 +659,6 @@ void menu_tick(void *sys)
         g_player = pl;
         if (ent != g_entity) g_ent_frames = 0; else if (g_ent_frames < 1000) g_ent_frames++;
         g_entity = ent;
-        g_fc_entity = ent;
         /* keep invincibility on through respawns and new levels */
         /* wait until a (re)spawned Bugs has existed for half a second */
         if (g_ent_frames < 25) ;
