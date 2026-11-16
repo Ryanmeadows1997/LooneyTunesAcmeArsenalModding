@@ -107,7 +107,7 @@ static char  g_info_shown[LINELEN], g_info_line[LINELEN];
 
 static u32 g_prev, g_open, g_page, g_cursor;
 static const char *g_status;
-static u32 g_player, g_entity;
+static u32 g_player, g_entity, g_ent_frames;
 
 static const u32 kWhite[4]  = { 0x3F800000, 0x3F800000, 0x3F800000, 0x3F800000 };
 static const u32 kGreen[4]  = { 0x00000000, 0x3F800000, 0x00000000, 0x3F800000 };
@@ -587,9 +587,12 @@ void menu_tick(void *sys)
         } else pl = 0;
         if (!pl) g_lastpos_ok = 0;
         g_player = pl;
+        if (ent != g_entity) g_ent_frames = 0; else if (g_ent_frames < 1000) g_ent_frames++;
         g_entity = ent;
         /* keep invincibility on through respawns and new levels */
-        if (g_invincible && ent && ent != g_inv_entity && !g_action)
+        /* wait until a (re)spawned Bugs has existed for half a second */
+        if (g_ent_frames < 25) ;
+        else if (g_invincible && ent && ent != g_inv_entity && !g_action)
             request(ACT_INV_ON);
         else if (g_invisible && ent && ent != g_invis_entity && !g_action)
             request(ACT_INVIS_ON);

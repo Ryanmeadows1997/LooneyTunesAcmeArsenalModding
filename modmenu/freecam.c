@@ -51,19 +51,32 @@ static float fatan2(float y, float x)
 
 static u32 valid(u32 p) { return p >= 0x100000 && p < 0x2000000 && !(p & 3); }
 
-/* active camera for player 0: game->vtbl[0x48](game, 0) */
+/* Active camera for player 0. The game's own lookup (game vtable +0x48 -> 0x19DD68) doesn't
+ * check for an empty camera stack, which happens around deaths/respawns, and then returns junk.
+ * So walk it here: game+0x30 -> players array at +0x534 -> player 0's camera stack
+ * (array at +0, count at +4) -> top entry. */
 static u32 find_camera(u32 st)
 {
     u32 game = RD32(st + 0x30);
     if (!valid(game)) return 0;
     u32 x = game + 0x30;
-    u32 vt = RD32(x + 0x57C);
-    if (!valid(vt)) return 0;
-    short adj = *(volatile short *)(vt + 0x48);
-    u32 fn = RD32(vt + 0x4C);
-    if (fn < 0x100000 || fn >= 0x450000) return 0;
-    u32 cam = gcall(fn, x + adj, 0, 0);
-    return valid(cam) ? cam : 0;
+    u32 players = RD32(x + 0x534);
+    u32 nplayers = RD32(x + 0x538);
+    if (!valid(players) || nplayers < 1 || nplayers > 4) return 0;
+    u32 stack = RD32(players);
+    if (!valid(stack)) return 0;
+    u32 arr = RD32(stack), n = RD32(stack + 4);
+    if (!valid(arr) || n < 1 || n > 16) return 0;
+    u32 cam = RD32(arr + (n - 1) * 4);
+    if (!valid(cam)) return 0;
+    /* only touch something that looks like a camera: unit-length up and forward vectors */
+    float ux = RDF(cam + 0x80), uy = RDF(cam + 0x84), uz = RDF(cam + 0x88);
+    float fx = RDF(cam + 0x90), fy = RDF(cam + 0x94), fz = RDF(cam + 0x98);
+    float lu = ux * ux + uy * uy + uz * uz, lf = fx * fx + fy * fy + fz * fz;
+    if (lu < 0.9f || lu > 1.1f || lf < 0.9f || lf > 1.1f) return 0;
+    float px = RDF(cam + 0x70);
+    if (px > 1.0e6f || px < -1.0e6f) return 0;
+    return cam;
 }
 
 static u32 s_init;
