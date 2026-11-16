@@ -58,6 +58,7 @@ u32 pad_raw(u8 *sticks)
 extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live;
 extern float g_fov_deg, g_far;          /* 0 = leave the game's value */
 void freecam_bookmark(int load);
+int freecam_pos(float *out);
 extern u32 g_bookmark_set;
 
 static u32 valid(u32 p) { return p >= 0x100000 && p < 0x2000000 && !(p & 3); }
@@ -196,7 +197,7 @@ static void hide_loading(void)
 
 /* ---- deferred actions: run from the state manager hook, outside rendering ---- */
 enum { ACT_NONE, ACT_WARP, ACT_PREVIEWER, ACT_INV_ON, ACT_INV_OFF, ACT_KILL, ACT_POWER_UP, ACT_POWER_DOWN,
-       ACT_INVIS_ON, ACT_INVIS_OFF, ACT_FINISH, ACT_RESTART };
+       ACT_INVIS_ON, ACT_INVIS_OFF, ACT_FINISH, ACT_RESTART, ACT_TELEPORT };
 static u32 g_action;
 static u32 g_action_entity;
 
@@ -257,6 +258,7 @@ static const Item kCamera[] = {
     { "Draw distance",      K_SLIDER, 0, &g_far,     500, 20000, 500, "Left/Right to change (game = 1000)" },
     { "Save camera spot",   K_ACTION, 100, 0, 0, 0, 0, "Free camera: remember this view" },
     { "Go to camera spot",  K_ACTION, 101, 0, 0, 0, 0, "Free camera: jump to the saved view" },
+    { "Bring Bugs here",    K_ACTION, ACT_TELEPORT, 0, 0, 0, 0, "Free camera: move Bugs to the camera" },
 };
 static const Item kGame[] = {
     { "Pause",             K_TOGGLE, T_PAUSE, 0, 0, 0, 0, "Freeze the game (menu and free camera still work)" },
@@ -316,6 +318,11 @@ static void activate(const Item *it)
         show_loading(it->arg == ACT_WARP ? "Loading level select..." : "Loading previewer...");
         g_pending = it->arg;
         g_pending_wait = 3;          /* let a few frames draw the message before the switch */
+        return;
+    case ACT_TELEPORT:
+        if (!g_freecam || !g_entity) { g_status = "Turn on the free camera in a level first"; return; }
+        request(ACT_TELEPORT);
+        g_status = "Moved Bugs to the camera";
         return;
     case ACT_FINISH:
     case ACT_RESTART:
@@ -437,7 +444,25 @@ static u32 find_state(u32 mgr, u32 vtable)
     return 0;
 }
 
-static const char *g_flow_msg;   /* shown after a finish/restart attempt fails */
+static const char *g_flow_msg;
+
+/* Bugs' position lives in several places (entity, aiPlayer copy, physics body, render/AI copies).
+ * Write all the ones found so physics doesn't pull him back. */
+static void put_pos(u32 p, const float *v)
+{
+    if (!valid(p)) return;
+    RDF(p) = v[0]; RDF(p + 4) = v[1]; RDF(p + 8) = v[2];
+}
+static void teleport_entity(u32 ent, const float *v)
+{
+    put_pos(ent + 0x20, v);
+    put_pos(ent + 0x530, v);
+    u32 phys = RD32(ent + 0x5C);
+    if (valid(phys)) { put_pos(phys, v); put_pos(phys + 0x230, v); }
+    u32 a = RD32(ent + 0x58);   if (valid(a)) put_pos(a, v);
+    u32 b = RD32(ent + 0x6C);   if (valid(b)) put_pos(b + 0x10, v);
+    u32 c = RD32(ent + 0x4C4);  if (valid(c)) { put_pos(c + 0x10, v); put_pos(c + 0xB0, v); }
+}   /* shown after a finish/restart attempt fails */
 
 static void finish_level(u32 mgr)
 {
@@ -490,6 +515,11 @@ void mgr_tick(u32 mgr)
     case ACT_POWER_DOWN: G(PL_POWER_DOWN, ent + 0x5D0, 0, 0); break;
     case ACT_INVIS_ON:   G(PL_CHEAT_INVISIBLE, ent, 1, 0); g_invis_entity = ent; break;
     case ACT_INVIS_OFF:  G(PL_CHEAT_INVISIBLE, ent, 0, 0); g_invis_entity = 0; break;
+    case ACT_TELEPORT: {
+        float v[3];
+        if (freecam_pos(v)) { v[2] -= 10.0f; teleport_entity(ent, v); }
+        break;
+    }
     }
 }
 

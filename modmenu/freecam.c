@@ -78,6 +78,14 @@ static float stick(u8 v)
 
 static float b_x, b_y, b_z, b_yaw, b_pitch;
 
+/* current free camera position (only meaningful while it's on) */
+int freecam_pos(float *out)
+{
+    if (!g_freecam || !s_init) return 0;
+    out[0] = s_x; out[1] = s_y; out[2] = s_z;
+    return 1;
+}
+
 void freecam_bookmark(int load)
 {
     if (!load) {
