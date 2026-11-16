@@ -223,7 +223,22 @@ u32 g_hide_hud;                    /* read by hud_hook */
 #define WF_LO   0x00400000u            /* heap: everything after the executable */
 #define WF_HI   0x02000000u
 #define WF_STEP 0x00040000u            /* background sweep per frame (catches newly loaded models) */
+/* Styles: 0 off, 1 textured lines, then flat colours. Flat colour lines come from the
+ * materials: every material is a small GS register packet in RAM (GIF A+D tag, then PRMODE,
+ * CLAMP, TEST, ALPHA, LABEL, FBA). For flat lines, PRMODE loses texturing and blending and
+ * gains fog; the unused LABEL slot becomes FOG = 0 (all fog) and FBA becomes FOGCOL, so every
+ * line is drawn in the fog colour. The original PRMODE and FBA are kept in PRMODE's unused
+ * upper bits so they can be put back. */
+static const char *const kWireNames[] = { "OFF", "Textured", "Green", "White", "Red", "Cyan", "Black" };
+static const u32 kWireColours[] = { 0, 0, 0x00FF40, 0xFFFFFF, 0x2020FF, 0xFFFF00, 0x000000 };   /* GS: 0xBBGGRR */
+#define WF_STYLES (sizeof(kWireNames) / sizeof(kWireNames[0]))
 static u32 g_wireframe, g_wf_applied, g_wf_cursor;
+#define MAT_MARK  0xC0DE0000u
+#define GS_PRMODE 0x1B
+#define GS_LABEL  0x62
+#define GS_FBA    0x4A
+#define GS_FOG    0x0A
+#define GS_FOGCOL 0x3D
 
 static void wf_put(u32 a, u32 v)
 {
@@ -231,10 +246,37 @@ static void wf_put(u32 a, u32 v)
     RD32(a | 0x20000000) = v;          /* uncached copy too: DMA reads RAM, not the data cache */
 }
 
-static void wf_sweep(u32 from, u32 to, u32 on)
+/* m = start of a possible material packet (its GIF tag); anything that does not match is left alone */
+static void wf_material(u32 m, u32 style)
 {
+    if (RD32(m + 8) != 0xEEEEEE || RD32(m + 0x18) != GS_PRMODE || RD32(m + 0x28) != 0x08) return;
+    u32 r5 = RD32(m + 0x58), r6 = RD32(m + 0x68);
+    u32 mark = RD32(m + 0x14);
+    if ((mark & 0xFFFF0000) == MAT_MARK) {
+        if (r5 != GS_FOG || r6 != GS_FOGCOL) return;
+        /* put the original back first */
+        wf_put(m + 0x10, mark & 0x7FFF);
+        wf_put(m + 0x14, 0);
+        wf_put(m + 0x50, 0); wf_put(m + 0x54, 0); wf_put(m + 0x58, GS_LABEL);
+        wf_put(m + 0x60, (mark >> 15) & 1); wf_put(m + 0x68, GS_FBA);
+    } else if (r5 != GS_LABEL || r6 != GS_FBA) return;
+    if (style < 2) return;
+    u32 pm = RD32(m + 0x10), fba = RD32(m + 0x60) & 1;
+    wf_put(m + 0x14, MAT_MARK | (fba << 15) | (pm & 0x7FFF));
+    wf_put(m + 0x10, (pm & ~0x50u) | 0x20);              /* TME off, ABE off, FGE on */
+    wf_put(m + 0x50, 0); wf_put(m + 0x54, 0); wf_put(m + 0x58, GS_FOG);  /* FOG = 0: all fog colour */
+    wf_put(m + 0x60, kWireColours[style]); wf_put(m + 0x68, GS_FOGCOL);
+}
+
+static void wf_sweep(u32 from, u32 to, u32 style)
+{
+    u32 on = style != 0;
     for (u32 a = from; a < to; a += 4) {
         u32 w = RD32(a), nv, regs;
+        if (w == 0x60000000) {                         /* hi half of a material packet's GIF tag */
+            if ((a & 15) == 4 && RD32(a - 4) == 1) wf_material(a - 4, style);
+            continue;
+        }
         if (on) {
             if (w == WF_TRI)        { nv = WF_TRI_LINES;   regs = WF_TRI_REGS; }
             else if (w == WF_STRIP) { nv = WF_STRIP_LINES; regs = WF_STRIP_REGS; }
@@ -258,7 +300,7 @@ static void wireframe_tick(void)
         return;
     }
     if (!g_wireframe) return;
-    wf_sweep(g_wf_cursor, g_wf_cursor + WF_STEP, 1);
+    wf_sweep(g_wf_cursor, g_wf_cursor + WF_STEP, g_wireframe);
     g_wf_cursor += WF_STEP;
     if (g_wf_cursor >= WF_HI) g_wf_cursor = WF_LO;
 }
@@ -293,7 +335,7 @@ static void request(u32 act)
 static u32 g_pending, g_pending_wait, g_loading_hold;
 
 /* ---- menu model ---- */
-enum { K_ACTION, K_TOGGLE, K_SLIDER };
+enum { K_ACTION, K_TOGGLE, K_SLIDER, K_CHOICE };
 typedef struct {
     const char *label;
     u8 kind;
@@ -337,7 +379,7 @@ static const Item kLevels[] = {
 };
 static const Item kVisual[] = {
     { "Hide HUD",            K_TOGGLE, T_HUD, 0, 0, 0, 0, "Health and power bars off, for clean screenshots" },
-    { "Wireframe",           K_TOGGLE, T_WIRE, 0, 0, 0, 0, "Draw the world and characters as lines" },
+    { "Wireframe",           K_CHOICE, T_WIRE, 0, 0, 0, 0, "Left/Right: line style (world and characters)" },
     { "Collision hitboxes",  K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
 };
 
@@ -366,8 +408,15 @@ static u32 *toggle_ptr(u32 id)
     }
 }
 
+static void cycle(const Item *it, int dir)
+{
+    u32 *p = toggle_ptr(it->arg);
+    *p = (*p + WF_STYLES + dir) % WF_STYLES;
+}
+
 static void activate(const Item *it)
 {
+    if (it->kind == K_CHOICE) { cycle(it, 1); return; }
     if (it->kind == K_TOGGLE) {
         u32 *p = toggle_ptr(it->arg);
         *p = !*p;
@@ -438,6 +487,11 @@ static void build_item_line(char *d, const Item *it, int selected)
     d = sapp(d, it->label);
     if (it->kind == K_TOGGLE)
         sapp(d, *toggle_ptr(it->arg) ? ": ON" : ": OFF");
+    else if (it->kind == K_CHOICE) {
+        d = sapp(d, ": < ");
+        d = sapp(d, kWireNames[*toggle_ptr(it->arg)]);
+        sapp(d, " >");
+    }
     else if (it->kind == K_SLIDER) {
         d = sapp(d, ": < ");
         if (*it->val == 0) d = sapp(d, "game");
@@ -770,6 +824,7 @@ void menu_tick(void *sys)
     if (hit & (B_LEFT | B_RIGHT)) {
         int dir = (hit & B_RIGHT) ? 1 : -1;
         if (it->kind == K_SLIDER) adjust(it, dir);
+        else if (it->kind == K_CHOICE) cycle(it, dir);
         else { g_page = (g_page + NPAGES + dir) % NPAGES; g_cursor = 0; g_status = 0; }
     }
     if (hit & B_CROSS) activate(it);
