@@ -46,6 +46,8 @@ patch=1,EE,0012BF44,word,00000000
 patch=1,EE,0012BF48,word,42480000
 patch=1,EE,0012BF4C,word,43DC0000
 patch=1,EE,0012BF50,word,44368000
+// profiler text position: the developers used 30.0, but this text system is 0-1 screen units
+patch=1,EE,0014A5B0,word,3C043D4C
 
 [Boot: Character Previewer (restored)]
 author=Glitch_Me_Up
@@ -5551,6 +5553,8 @@ patch=1,EE,0012BF44,word,00000000
 patch=1,EE,0012BF48,word,42480000
 patch=1,EE,0012BF4C,word,43DC0000
 patch=1,EE,0012BF50,word,44368000
+// profiler text position: the developers used 30.0, but this text system is 0-1 screen units
+patch=1,EE,0014A5B0,word,3C043D4C
 // Character Previewer fixes (for the menu's previewer item)
 // Fix 1: wait for DDF_PAK.PAK to load before building the actor list.
 // Hook 0x151964 -> code cave in unused padding at 0x453E20; polls kDDFSystem (vtable +0x20), max 8M tries.

@@ -16,6 +16,8 @@ python3 - <<'PY'
 import struct
 b = open('hubfix/hubgrid.bin', 'rb').read()
 lines = ['patch=1,EE,%08X,word,%08X' % (0x12BED8 + i, struct.unpack('<I', b[i:i+4])[0]) for i in range(0, len(b), 4)]
+lines.append('// profiler text position: the developers used 30.0, but this text system is 0-1 screen units')
+lines.append('patch=1,EE,0014A5B0,word,3C043D4C')
 open('hubfix/hubgrid.pnach', 'w').write('// developer level select: 3x5 chapter grid (fixes the last two chapters overlapping top-left)\n' + '\n'.join(lines) + '\n')
 PY
 python3 package.py ../patches/SLES-54931_91C2DF01.pnach
