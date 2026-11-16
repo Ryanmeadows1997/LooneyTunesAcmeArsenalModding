@@ -107,7 +107,7 @@ static char  g_info_shown[LINELEN], g_info_line[LINELEN];
 
 static u32 g_prev, g_open, g_page, g_cursor;
 static const char *g_status;
-static u32 g_player, g_entity, g_ent_frames;
+static u32 g_player, g_entity, g_ent_frames, g_last_play;
 
 static const u32 kWhite[4]  = { 0x3F800000, 0x3F800000, 0x3F800000, 0x3F800000 };
 static const u32 kGreen[4]  = { 0x00000000, 0x3F800000, 0x00000000, 0x3F800000 };
@@ -206,6 +206,12 @@ static u32 g_inv_entity;      /* entity we last made invincible (re-apply on res
 static u32 g_info_on;
 static u32 g_invisible, g_invis_entity;
 static u32 g_unlock_levels;
+u32 g_hide_hud;                    /* read by hud_hook */
+
+/* ---- level timer: game time while a level is drawing, reset when a new level starts ---- */
+static u32 g_timer_on, g_timer_frames, g_timer_state;
+static void *g_timer_el;
+static char g_timer_shown[24], g_timer_line[24];
 
 /* ---- pause / frame advance / game speed ---- */
 static u32 g_paused, g_step;
@@ -242,7 +248,7 @@ typedef struct {
     const char *help;
 } Item;
 
-enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE };
+enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE, T_HUD, T_TIMER };
 
 static const Item kPlayer[] = {
     { "Invincible",         K_TOGGLE, T_INV,   0, 0, 0, 0, "Bugs takes no damage" },
@@ -251,6 +257,7 @@ static const Item kPlayer[] = {
     { "Power down weapon",  K_ACTION, ACT_POWER_DOWN, 0, 0, 0, 0, "One weapon level down" },
     { "Kill / respawn",     K_ACTION, ACT_KILL,       0, 0, 0, 0, "Respawn at the last checkpoint" },
     { "Info overlay",       K_TOGGLE, T_INFO,  0, 0, 0, 0, "Position and speed on screen" },
+    { "Level timer",        K_TOGGLE, T_TIMER, 0, 0, 0, 0, "Game time in this level (pauses and loads don't count)" },
 };
 static const Item kCamera[] = {
     { "Free camera",        K_TOGGLE, T_FREECAM, 0, 0, 0, 0, "Sticks fly/look, R1/L1 up/down, R2 fast, L2 slow" },
@@ -273,6 +280,7 @@ static const Item kLevels[] = {
     { "Restart level",       K_ACTION, ACT_RESTART,   0, 0, 0, 0, "Levels started from the developer level select" },
 };
 static const Item kVisual[] = {
+    { "Hide HUD",            K_TOGGLE, T_HUD, 0, 0, 0, 0, "Health and power bars off, for clean screenshots" },
     { "Wireframe",           K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
     { "Collision hitboxes",  K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
 };
@@ -295,6 +303,8 @@ static u32 *toggle_ptr(u32 id)
     case T_INVIS: return &g_invisible;
     case T_UNLOCK: return &g_unlock_levels;
     case T_PAUSE: return &g_paused;
+    case T_HUD: return &g_hide_hud;
+    case T_TIMER: return &g_timer_on;
     default: return &g_info_on;
     }
 }
@@ -565,6 +575,39 @@ static void update_info(void)
     set_text(g_info, g_info_shown, g_info_line);
 }
 
+static void update_timer(u32 st)
+{
+    /* counts frames in which a level was drawn and the game wasn't paused, scaled by game speed */
+    if (st) {
+        if (st != g_timer_state) { g_timer_state = st; g_timer_frames = 0; }
+        if (!g_paused) {
+            u32 add = 100;                       /* hundredths of a frame */
+            if (g_speed_pct != 0) add = (u32)f2i(g_speed_pct);
+            g_timer_frames += add;
+        }
+    }
+    if (!g_timer_on || !st || g_open) {
+        if (g_timer_el) { text_destroy(g_sys, g_timer_el); g_timer_el = 0; }
+        return;
+    }
+    if (!g_timer_el) {
+        g_timer_el = make_text(0.72f, 0.05f, 2.0f);
+        g_timer_shown[0] = 1; g_timer_shown[1] = 0;
+        if (!g_timer_el) return;
+        set_color(g_timer_el, kYellow);
+    }
+    /* PAL: 50 frames a second -> 2 centiseconds per frame */
+    u32 cs = g_timer_frames / 50;               /* (frames*100)/50 /100*... = centiseconds */
+    u32 m = cs / 6000, sec = (cs / 100) % 60, c = cs % 100;
+    char *d = g_timer_line;
+    d = dec(d, (int)m); d = sapp(d, ":");
+    if (sec < 10) d = sapp(d, "0");
+    d = dec(d, (int)sec); d = sapp(d, ".");
+    if (c < 10) d = sapp(d, "0");
+    dec(d, (int)c);
+    set_text(g_timer_el, g_timer_shown, g_timer_line);
+}
+
 void menu_tick(void *sys)
 {
     (void)sys;
@@ -574,6 +617,7 @@ void menu_tick(void *sys)
     {
         u32 st = g_state, pl = 0, ent = 0;
         g_state = 0;
+        g_last_play = valid(st) ? st : 0;
         g_fc_live = g_fc_active;     /* free camera only blocks the pad while it's actually live */
         g_fc_active = 0;
         if (valid(st)) {
@@ -630,6 +674,7 @@ void menu_tick(void *sys)
     }
     g_block_input = g_open;
     update_info();
+    update_timer(g_player ? g_last_play : 0);
     if (!g_open)
         return;
 

@@ -205,3 +205,15 @@ gcall5:
         lw    $s0, 4($sp)
         jr    $ra
         addiu $sp, $sp, 16
+
+# Replaces "jal 0x12DB30" (draw player HUD) at 0x145AE8: skipped while g_hide_hud is set.
+        .globl hud_hook
+hud_hook:
+        lui   $at, %hi(g_hide_hud)
+        lw    $at, %lo(g_hide_hud)($at)
+        bnez  $at, 3f
+        nop
+        j     0x12DB30
+        nop
+3:      jr    $ra
+        nop
