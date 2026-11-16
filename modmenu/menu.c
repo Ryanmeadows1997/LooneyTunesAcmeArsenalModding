@@ -197,7 +197,7 @@ static void hide_loading(void)
 
 /* ---- deferred actions: run from the state manager hook, outside rendering ---- */
 enum { ACT_NONE, ACT_WARP, ACT_PREVIEWER, ACT_INV_ON, ACT_INV_OFF, ACT_KILL, ACT_POWER_UP, ACT_POWER_DOWN,
-       ACT_INVIS_ON, ACT_INVIS_OFF, ACT_FINISH, ACT_RESTART, ACT_TELEPORT };
+       ACT_INVIS_ON, ACT_INVIS_OFF, ACT_FINISH, ACT_RESTART, ACT_TELEPORT, ACT_PROFILE };
 static u32 g_action;
 static u32 g_action_entity;
 
@@ -256,7 +256,7 @@ static const Item kPlayer[] = {
     { "Power up weapon",    K_ACTION, ACT_POWER_UP,   0, 0, 0, 0, "One weapon level up" },
     { "Power down weapon",  K_ACTION, ACT_POWER_DOWN, 0, 0, 0, 0, "One weapon level down" },
     { "Kill / respawn",     K_ACTION, ACT_KILL,       0, 0, 0, 0, "Respawn at the last checkpoint" },
-    { "Info overlay",       K_TOGGLE, T_INFO,  0, 0, 0, 0, "Position and speed on screen" },
+    { "Info overlay",       K_TOGGLE, T_INFO,  0, 0, 0, 0, "Position, speed and free memory" },
     { "Level timer",        K_TOGGLE, T_TIMER, 0, 0, 0, 0, "Game time in this level (pauses and loads don't count)" },
 };
 static const Item kCamera[] = {
@@ -278,6 +278,7 @@ static const Item kLevels[] = {
     { "Unlock all levels",   K_TOGGLE, T_UNLOCK,      0, 0, 0, 0, "Every level in the main menu's level select" },
     { "Finish level",        K_ACTION, ACT_FINISH,    0, 0, 0, 0, "Levels started from the developer level select" },
     { "Restart level",       K_ACTION, ACT_RESTART,   0, 0, 0, 0, "Levels started from the developer level select" },
+    { "Profile level",       K_ACTION, ACT_PROFILE,   0, 0, 0, 0, "Developers' memory sweep of this level (Start+Circle exits)" },
 };
 static const Item kVisual[] = {
     { "Hide HUD",            K_TOGGLE, T_HUD, 0, 0, 0, 0, "Health and power bars off, for clean screenshots" },
@@ -336,6 +337,7 @@ static void activate(const Item *it)
         return;
     case ACT_FINISH:
     case ACT_RESTART:
+    case ACT_PROFILE:
         request(it->arg);
         close_menu();
         return;
@@ -492,14 +494,14 @@ static void finish_level(u32 mgr)
     G(0x1016B8, mgr, play, 0);            /* remove the play state; the level flow carries on */
 }
 
-static void restart_level(u32 mgr)
+static void restart_level(u32 mgr, u32 profile)
 {
     u32 hub = find_state(mgr, HUB_STATE_VTABLE);
     if (!hub) { g_flow_msg = "Restart needs a level started from the level select"; return; }
     u32 chapter = RD32(hub + 0x3C), act = RD32(hub + 0x38);
     if (!valid(chapter) || !valid(act)) return;
     G(MGR_POP_TO, mgr, hub, 0);
-    gcall5(HUB_START_LEVEL, hub, mgr, chapter + 8, act + 8, 0);
+    gcall5(HUB_START_LEVEL, hub, mgr, chapter + 8, act + 8, profile);
 }
 
 void mgr_tick(u32 mgr)
@@ -513,7 +515,8 @@ void mgr_tick(u32 mgr)
     case ACT_WARP:      switch_state(mgr, parse_once(g_doc_hub, &g_node_hub, kHubXml)); return;
     case ACT_PREVIEWER: switch_state(mgr, parse_once(g_doc_prev, &g_node_prev, kPreviewerXml)); return;
     case ACT_FINISH:    finish_level(mgr); return;
-    case ACT_RESTART:   restart_level(mgr); return;
+    case ACT_RESTART:   restart_level(mgr, 0); return;
+    case ACT_PROFILE:   restart_level(mgr, 1); return;
     }
     if (!valid(ent) || ent != g_entity)     /* player changed since the request: skip */
         return;
@@ -531,6 +534,25 @@ void mgr_tick(u32 mgr)
         break;
     }
     }
+}
+
+/* ---- free memory, the way the developers' profiler measures it ---- */
+#define MEM_SYSTEM   0x2EE320
+#define MEM_FREE     0x2EE4F0
+static u32 g_mem_min;
+
+static char *mem_text(char *d)
+{
+    u32 sys = G(MEM_SYSTEM, 0, 0, 0);
+    if (!valid(sys)) return d;
+    u32 bytes = G(MEM_FREE, sys, 0, 0);
+    if (!g_mem_min || bytes < g_mem_min) g_mem_min = bytes;
+    u32 kb = bytes >> 10, mb100 = (kb * 100) >> 10;     /* MB with two decimals */
+    d = sapp(d, "  MEM ");
+    d = dec(d, (int)(mb100 / 100)); d = sapp(d, ".");
+    if (mb100 % 100 < 10) d = sapp(d, "0");
+    d = dec(d, (int)(mb100 % 100));
+    return sapp(d, "MB");
 }
 
 /* ---- info overlay ---- */
@@ -568,7 +590,8 @@ static void update_info(void)
                 g_since_move = 0;
             } else if (g_since_move > 25) g_speed = 0;
         }
-        d = sapp(d, "  SPD "); dec(d, (int)g_speed);
+        d = sapp(d, "  SPD "); d = dec(d, (int)g_speed);
+        mem_text(d);
         g_lastpos[0] = x; g_lastpos[1] = y;
         g_lastpos_ok = 1;
     }
