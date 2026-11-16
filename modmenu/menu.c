@@ -223,14 +223,14 @@ u32 g_hide_hud;                    /* read by hud_hook */
 #define WF_LO   0x00400000u            /* heap: everything after the executable */
 #define WF_HI   0x02000000u
 #define WF_STEP 0x00040000u            /* background sweep per frame (catches newly loaded models) */
-/* Styles: 0 off, 1 textured lines, then flat colours. Flat colour lines come from the
+/* Styles: 0 off, 1 textured lines, 2 white lines. Flat colour lines come from the
  * materials: every material is a small GS register packet in RAM (GIF A+D tag, then PRMODE,
  * CLAMP, TEST, ALPHA, LABEL, FBA). For flat lines, PRMODE loses texturing and blending and
  * gains fog; the unused LABEL slot becomes FOG = 0 (all fog) and FBA becomes FOGCOL, so every
  * line is drawn in the fog colour. The original PRMODE and FBA are kept in PRMODE's unused
  * upper bits so they can be put back. */
-static const char *const kWireNames[] = { "OFF", "Textured", "Green", "White", "Red", "Cyan", "Black" };
-static const u32 kWireColours[] = { 0, 0, 0x00FF40, 0xFFFFFF, 0x2020FF, 0xFFFF00, 0x000000 };   /* GS: 0xBBGGRR */
+static const char *const kWireNames[] = { "OFF", "Textured", "White" };
+static const u32 kWireColours[] = { 0, 0, 0xFFFFFF };   /* GS: 0xBBGGRR */
 #define WF_STYLES (sizeof(kWireNames) / sizeof(kWireNames[0]))
 static u32 g_wireframe, g_wf_applied, g_wf_cursor;
 #define MAT_MARK  0xC0DE0000u
