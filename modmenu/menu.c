@@ -145,7 +145,7 @@ static void set_text(void *e, char *shown, const char *s)
 }
 
 #define LINE_Y(i) (0.07f + 0.058f * (float)(i))
-#define NTABS 4
+#define NTABS 5
 
 static void open_menu(void)
 {
@@ -155,7 +155,7 @@ static void open_menu(void)
         g_shown[i][1] = 0;
     }
     for (int i = 0; i < NTABS; i++) {
-        g_tab[i] = make_text(0.06f + 0.19f * (float)i, LINE_Y(1), 2.0f);
+        g_tab[i] = make_text(0.06f + 0.165f * (float)i, LINE_Y(1), 1.7f);
         g_tab_shown[i][0] = 1;
         g_tab_shown[i][1] = 0;
     }
@@ -205,6 +205,22 @@ static u32 g_info_on;
 static u32 g_invisible, g_invis_entity;
 static u32 g_unlock_levels;
 
+/* ---- pause / frame advance / game speed ---- */
+static u32 g_paused, g_step;
+static float g_speed_pct;          /* slider: 0 = normal */
+u32 g_dtscale;                     /* float bits read by dt_hook; 0 = unscaled */
+
+#define MGR_TRANSITIONS 0x101160
+
+u32 app_gate(u32 app)
+{
+    if (!g_paused) return 1;
+    if (g_step) { g_step--; return 1; }
+    /* paused: still let state changes (and the menu's deferred actions) happen */
+    G(MGR_TRANSITIONS, app + 0x40, 0, 0);
+    return 0;
+}
+
 static void request(u32 act)
 {
     g_action = act;
@@ -224,7 +240,7 @@ typedef struct {
     const char *help;
 } Item;
 
-enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK };
+enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE };
 
 static const Item kPlayer[] = {
     { "Invincible",         K_TOGGLE, T_INV,   0, 0, 0, 0, "Bugs takes no damage" },
@@ -241,6 +257,11 @@ static const Item kCamera[] = {
     { "Save camera spot",   K_ACTION, 100, 0, 0, 0, 0, "Free camera: remember this view" },
     { "Go to camera spot",  K_ACTION, 101, 0, 0, 0, 0, "Free camera: jump to the saved view" },
 };
+static const Item kGame[] = {
+    { "Pause",             K_TOGGLE, T_PAUSE, 0, 0, 0, 0, "Freeze the game (menu and free camera still work)" },
+    { "Step one frame",    K_ACTION, 102, 0, 0, 0, 0, "While paused. Shortcut: R3 with the menu closed" },
+    { "Game speed %",      K_SLIDER, 0, &g_speed_pct, 10, 400, 10, "Left/Right to change (game = 100)" },
+};
 static const Item kLevels[] = {
     { "Level warp",          K_ACTION, ACT_WARP,      0, 0, 0, 0, "Developer level select (every level)" },
     { "Character Previewer", K_ACTION, ACT_PREVIEWER, 0, 0, 0, 0, "Developer model/animation viewer" },
@@ -255,6 +276,7 @@ typedef struct { const char *name; const Item *items; u32 count; } Page;
 static const Page kPages[] = {
     { "PLAYER", kPlayer, sizeof(kPlayer) / sizeof(Item) },
     { "CAMERA", kCamera, sizeof(kCamera) / sizeof(Item) },
+    { "GAME",   kGame,   sizeof(kGame) / sizeof(Item) },
     { "LEVELS", kLevels, sizeof(kLevels) / sizeof(Item) },
     { "VISUAL", kVisual, sizeof(kVisual) / sizeof(Item) },
 };
@@ -267,6 +289,7 @@ static u32 *toggle_ptr(u32 id)
     case T_FREECAM: return &g_freecam;
     case T_INVIS: return &g_invisible;
     case T_UNLOCK: return &g_unlock_levels;
+    case T_PAUSE: return &g_paused;
     default: return &g_info_on;
     }
 }
@@ -295,6 +318,11 @@ static void activate(const Item *it)
         if (!g_entity) { g_status = "No player here"; return; }
         request(it->arg);
         g_status = "Done";
+        return;
+    case 102:
+        if (!g_paused) { g_status = "Pause first"; return; }
+        g_step++;
+        g_status = "Stepped one frame";
         return;
     case 100:
     case 101:
@@ -493,6 +521,16 @@ void menu_tick(void *sys)
     u32 pad = pad_raw(0);
     u32 hit = pad & ~g_prev;
     g_prev = pad;
+
+    /* game speed: dt_hook multiplies the frame time by this */
+    {
+        union { float f; u32 u; } sc;
+        sc.f = g_speed_pct / 100.0f;
+        g_dtscale = g_speed_pct == 0 ? 0 : sc.u;
+    }
+    /* frame advance shortcut: R3 alone while paused and the menu is closed */
+    if (g_paused && !g_open && (hit & B_R3) && !(pad & B_L3))
+        g_step++;
 
     if ((pad & (B_L3 | B_R3)) == (B_L3 | B_R3) && (hit & (B_L3 | B_R3))) {
         if (g_open) close_menu();

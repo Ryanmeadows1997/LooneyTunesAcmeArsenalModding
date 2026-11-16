@@ -138,3 +138,43 @@ hook_mgr:
         addiu $sp, $sp, -0x100
         j     0x101168
         .word (0x3F<<26)|(29<<21)|(16<<16)|0xA8
+
+# Entry of the app update (0x105A98). app_gate(app) decides whether this frame's game update
+# runs (pause / frame advance); when it returns 0 the update is skipped.
+        .globl hook_app
+hook_app:
+        SAVEALL
+        jal   app_gate
+        nop
+        lui   $at, %hi(g_gate)
+        sw    $v0, %lo(g_gate)($at)
+        RESTOREALL
+        lui   $at, %hi(g_gate)
+        lw    $at, %lo(g_gate)($at)
+        beqz  $at, 1f
+        nop
+        addiu $sp, $sp, -0x30
+        j     0x105AA0
+        .word (0x39<<26)|(29<<21)|(20<<16)|0x10
+1:      jr    $ra
+        move  $v0, $zero
+
+# Replaces "jal 0x2CE918" (frame time) at 0x105AA8: dt = app->dt * g_dtscale (if set).
+        .globl dt_hook
+dt_hook:
+        .word (0x31<<26)|(4<<21)|(0<<16)|0x10          # lwc1 $f0, 0x10($a0)
+        lui   $at, %hi(g_dtscale)
+        lw    $t0, %lo(g_dtscale)($at)
+        beqz  $t0, 2f
+        nop
+        .word (0x11<<26)|(4<<21)|(8<<16)|(1<<11)        # mtc1 $t0, $f1
+        nop
+        .word (0x11<<26)|(0x10<<21)|(1<<16)|(0<<11)|(0<<6)|2   # mul.s $f0, $f0, $f1
+2:      jr    $ra
+        nop
+
+        .bss
+        .align 2
+        .globl g_gate
+g_gate: .space 4
+        .text
