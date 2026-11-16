@@ -313,13 +313,14 @@ static void ov_apply(u32 on, u32 black, u32 live)
         const OvSite *s = &kOvSites[i];
         u32 want = on ? s->hooked : s->orig;
         /* the copy the game uploads from */
+        /* any "b" with the original's fields counts as ours (also hooks from an older build) */
         u32 cur = RD32(s->va);
-        if (cur != want && (cur == s->orig || cur == s->hooked)) wf_put(s->va, want);
+        if (cur != want && (cur & ~0x7FFu) == (s->orig & ~0x7FFu)) wf_put(s->va, want);
         /* and the program loaded right now, if it's this one */
         if (live) {
             u32 m = VU1_MICRO + s->site * 8;
             cur = RD32(m);
-            if (RD32(m + 8) == s->kick && cur != want && (cur == s->orig || cur == s->hooked)) RD32(m) = want;
+            if (RD32(m + 8) == s->kick && cur != want && (cur & ~0x7FFu) == (s->orig & ~0x7FFu)) RD32(m) = want;
         }
     }
 }
