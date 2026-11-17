@@ -58,6 +58,7 @@ u32 pad_raw(u8 *sticks)
 extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live;
 extern u32 g_hitboxes, g_all_scenery;
 void scenery_tick(u32 st);
+void scenery_measure(void);
 extern char g_scenery_msg[];
 extern float g_hb_range;
 void hitbox_tick(u32 st);
@@ -811,6 +812,7 @@ void menu_tick(void *sys)
         g_state = 0;
         g_last_play = valid(st) ? st : 0;
         hitbox_tick(g_last_play);
+        scenery_measure();
         g_fc_live = g_fc_active;     /* free camera only blocks the pad while it's actually live */
         g_fc_active = 0;
         if (valid(st)) {

@@ -72,9 +72,6 @@ static u32 level_db(u32 st, u32 *world)
 u32 game_camera(u32 st);           /* freecam.c */
 char g_scenery_msg[48];            /* shown on the menu's status line while this is on */
 
-static void hex8(char *d, u32 v)
-{
-    for (int i = 7; i >= 0; i--) { u32 n = (v >> (i * 4)) & 15; *d++ = (char)(n < 10 ? '0' + n : 'A' + n - 10); }
     *d = 0;
 }
 static char *app(char *d, const char *s) { while (*s) *d++ = *s++; *d = 0; return d; }
@@ -87,17 +84,74 @@ static char *dec(char *d, u32 v)
 }
 
 #define PER_FRAME 8
+
+/* The renderer builds each frame into fixed buffers (tag list core+0x4..+0x8, write pointer
+ * +0xC; packet data +0x10..+0x14, write pointer +0x18) and doesn't check for running out.
+ * With the whole level shown and a long draw distance they overflow and the game crashes. So
+ * the fill is measured late in the frame (hitbox_tick time) and the shown set is trimmed,
+ * farthest first, when it gets high. */
+#define RENDER_CORE 0x470158
+#define RENDER_VT   0x494D90
+#define FILL_HIGH   55          /* % : start hiding */
+#define FILL_LOW    40          /* % : room to show more */
+u32 g_render_fill;              /* % of the fuller buffer, last frame */
+static u32 s_limit = MAX_FORCED;
+
+void scenery_measure(void)
+{
+    u32 core = RD32(RENDER_CORE);
+    if (!valid(core) || RD32(core) != RENDER_VT) return;
+    u32 ts = RD32(core + 0x4) & 0x0FFFFFFF, te = RD32(core + 0x8) & 0x0FFFFFFF, tp = RD32(core + 0xC) & 0x0FFFFFFF;
+    u32 ds = RD32(core + 0x10) & 0x0FFFFFFF, de = RD32(core + 0x14) & 0x0FFFFFFF, dp = RD32(core + 0x18) & 0x0FFFFFFF;
+    if (te <= ts || de <= ds || tp < ts || dp < ds) return;
+    u32 a = (tp - ts) / ((te - ts) / 100 + 1), b = (dp - ds) / ((de - ds) / 100 + 1);
+    g_render_fill = a > b ? a : b;
+}
+
+static void unshow(u32 i)
+{
+    u32 p = s_forced[i], fn = s_fn[i], vt = valid(p) ? RD32(p) : 0;
+    int ours = fn == VIS_SET_STATE ? (vt == VISUAL_VT && VIS_STATE(p) == 0)
+                                   : ((vt == ANIM_VT1 || vt == ANIM_VT2) && (RD32(p + 4) & 2));
+    if (ours) {
+        s_busy = 1;
+        gcall(fn, p, 0, 0xFFFFFFFF);
+        s_busy = 0;
+    }
+}
+
+/* hide the n farthest pieces we showed */
+static void trim(u32 n, float cx, float cy, float cz)
+{
+    while (n-- && s_n) {
+        u32 far = 0; float fd = -1;
+        for (u32 i = 0; i < s_n; i++) {
+            u32 p = s_forced[i];
+            float dx = *(volatile float *)(p + 0x10) - cx, dy = *(volatile float *)(p + 0x14) - cy, dz = *(volatile float *)(p + 0x18) - cz;
+            float d = dx * dx + dy * dy + dz * dz;
+            if (d > fd) { fd = d; far = i; }
+        }
+        unshow(far);
+        s_n--; s_forced[far] = s_forced[s_n]; s_fn[far] = s_fn[s_n];
+    }
+}
 void scenery_tick(u32 st)
 {
     u32 world = 0, db = level_db(st, &world);
-    if (world != s_world) { s_n = 0; s_world = world; }     /* new level: the old list is gone */
+    if (world != s_world) { s_n = 0; s_world = world; s_limit = MAX_FORCED; }     /* new level: the old list is gone */
     if (!db) return;
 
     if (g_all_scenery) {
-        for (u32 k = 0; k < PER_FRAME && s_n < MAX_FORCED; k++) {
         u32 cam = game_camera(st);
         if (!cam) return;
         float cx = *(volatile float *)(cam + 0x70), cy = *(volatile float *)(cam + 0x74), cz = *(volatile float *)(cam + 0x78);
+        if (g_render_fill >= FILL_HIGH) {               /* too much: drop the farthest, lower the cap */
+            trim(16, cx, cy, cz);
+            s_limit = s_n;
+        } else if (g_render_fill < FILL_LOW && s_limit < MAX_FORCED) {
+            s_limit += PER_FRAME;                       /* room again: let the cap creep back up */
+        }
+        for (u32 k = 0; k < PER_FRAME && s_n < s_limit && g_render_fill < FILL_HIGH; k++) {
         u32 p = RD32(db + DB_ALL), n = 0, best = 0, left = 0;
         float bd = 0;
         while (valid(p) && n < 20000) {
@@ -113,11 +167,12 @@ void scenery_tick(u32 st)
         }
         char *m = app(g_scenery_msg, "Scenery on ");
         m = dec(m, s_n);
-        m = app(m, ", left ");
+        m = app(m, ", hidden ");
         m = dec(m, left);
-        if (!best) return;
-        m = app(m, ", now ");
-        hex8(m, best);
+        m = app(m, ", render ");
+        m = dec(m, g_render_fill);
+        m = app(m, "%");
+        if (!best) break;
         u32 fn = hidden_kind(best);
         s_forced[s_n] = best; s_fn[s_n++] = fn;
         s_busy = 1;
@@ -125,17 +180,8 @@ void scenery_tick(u32 st)
         s_busy = 0;
         }
     } else if (s_n) {
-        for (u32 i = 0; i < s_n; i++) {
-            u32 p = s_forced[i];
-            u32 fn = s_fn[i], vt = valid(p) ? RD32(p) : 0;
-            int ours = fn == VIS_SET_STATE ? (vt == VISUAL_VT && VIS_STATE(p) == 0)
-                                           : ((vt == ANIM_VT1 || vt == ANIM_VT2) && (RD32(p + 4) & 2));
-            if (ours) {
-                s_busy = 1;
-                gcall(fn, p, 0, 0xFFFFFFFF);
-                s_busy = 0;
-            }
-        }
+        for (u32 i = 0; i < s_n; i++) unshow(i);
         s_n = 0;
+        s_limit = MAX_FORCED;
     }
 }
