@@ -42,7 +42,7 @@ Tick **Mod menu (L3+R3)** in PCSX2's cheat list, then press **L3 + R3** (click b
 
 - D-pad Up/Down to choose, **Cross** to select, D-pad Left/Right to switch page (or change a slider)
 - **PLAYER**: invincible, invisible, weapon power up/down, kill/respawn, info overlay (position, speed, free memory), level timer
-- **CAMERA**: free camera (sticks fly/look, R1/L1 up/down, R2 fast, L2 slow), field of view, draw distance, save/return to a camera spot, bring Bugs to the camera
+- **CAMERA**: free camera (sticks fly/look, R1/L1 up/down, R2 fast, L2 slow), show all scenery (reveals the level sections the game hides until Bugs gets there), field of view, draw distance, save/return to a camera spot, bring Bugs to the camera
 - **GAME**: pause, frame advance (also R3 while paused), game speed 10-400%
 - **LEVELS**: level warp (developer level select from anywhere), Character Previewer, unlock all levels, finish/restart level, profile level
 - **VISUAL**: hide HUD, wireframe (textured, white, or solid with white/black lines on top), collision hitboxes (all, level, triggers or spheres; depth-tested, with a range setting)

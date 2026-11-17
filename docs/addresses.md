@@ -119,3 +119,9 @@ Active camera: `game+0x30` vtable `+0x48` (player index) -> camera. Camera `+0x7
 - **Elements:** box (vtable 0x493F3C): half extents at +0x30, bounding radius at +0x40. Sphere (vtable 0x492330): radius at +0x30.
 - **Renderer** (*0x470158, vtable 0x494D90): VIF1 tag list write pointer at +0xC; data write pointer at +0x18. Projection constants: centre at +0x170, C0 at +0x180 (192, -256, Z scale), S at +0x190 (2, 2). Screen = centre + C0·S·view/depth. GS Z = C0.z/depth, tested GEQUAL against a Z32 buffer.
 - **Drawing:** the overlay is a REF tag pointing at the mod's own FLUSH + DIRECT packet. That packet sets PRMODECONT, PRIM (line) and TEST, then sends lines in REGLIST mode. The tag is inserted before the frame's trailing bloom passes (FRAME writes with width != 512), because after those the depth buffer no longer holds the scene. The GIF tag's PRE/PRIM fields only work in PACKED mode.
+
+### Show all scenery (CAMERA page)
+- **Hidden sections:** levels hide sections of scenery until Bugs reaches them. Every show/hide goes through setEnabled(scene db, inst, on) at 0x2FE828. Bit 1 of inst+4 is "enabled", bit 0 is "active". The requests are processed later, at 0x2FD538.
+- **kVisualInstance (vtable 0x49353C):** the look index is at +0x70 (short): -1 = hidden, 0..n-1 = one of the element's n looks (element +0x28). setState(inst, _, index) at 0x2F9980 (state interface +0x30). Enabling one whose index is still -1 crashes, so always go through setState.
+- **Animated scenery (vtables 0x491FC8, 0x491BC8):** setState at 0x2C7FF0. It stores no index: off for -1 or an index past element +0x160, on otherwise.
+- **Render buffers:** the renderer's frame buffers are a 256 KB tag list (core+0x4..+0x8, pointer +0xC) and 1.25 MB of packet data (core+0x10..+0x14, pointer +0x18). Nothing checks them for space, so the mod trims the shown set when they pass 45% full.
