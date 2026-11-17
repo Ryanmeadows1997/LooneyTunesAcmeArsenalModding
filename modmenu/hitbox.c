@@ -19,7 +19,7 @@ typedef unsigned char u8;
 u32 gcall(u32 fn, u32 a0, u32 a1, u32 a2);
 u32 game_camera(u32 st);           /* freecam.c */
 
-u32 g_hitboxes;                    /* menu toggle */
+u32 g_hitboxes;                    /* menu choice: 0 off, 1 all, 2 level boxes, 3 triggers, 4 spheres */
 float g_hb_range;                  /* slider: 0 = default */
 
 #define GAME_WORLD    0x4FC        /* game + 0x4FC: the level's world */
@@ -35,8 +35,8 @@ float g_hb_range;                  /* slider: 0 = default */
 #define SYNC_DCACHE   0x368DD8
 
 #define HB_BUF0       0x00098000u
-#define HB_BUF1       0x000A8000u
-#define HB_QWORDS     0x1000u      /* 64 KB each */
+#define HB_BUF1       0x000AC000u
+#define HB_QWORDS     0x1400u      /* 80 KB each (0x98000-0xC0000) */
 
 static u32 valid(u32 p) { return p >= 0x100000 && p < 0x2000000 && !(p & 3); }
 
@@ -50,7 +50,7 @@ static void ad(u32 reg, u32 lo, u32 hi, u32 eop)
 }
 
 /* ---- camera ---- */
-static float s_px, s_py, s_pz, s_rx, s_ry, s_rz, s_ux, s_uy, s_uz, s_fx, s_fy, s_fz, s_sx, s_sy, s_cx, s_cy;
+static float s_px, s_py, s_pz, s_rx, s_ry, s_rz, s_ux, s_uy, s_uz, s_fx, s_fy, s_fz, s_sx, s_sy, s_cx, s_cy, s_zk;
 #define NEAR 0.5f
 #define GS_LO 1024.0f
 #define GS_HI 3072.0f
@@ -71,6 +71,11 @@ static int setup_camera(u32 cam, u32 core)
     if (!(sx > 20.0f && sx < 20000.0f && sy > 20.0f && sy < 20000.0f)) { sx = 384.0f; sy = 512.0f; }
     if (!(s_cx > 1500.0f && s_cx < 2600.0f && s_cy > 1500.0f && s_cy < 2600.0f)) { s_cx = 2048.0f; s_cy = 2048.0f; }
     s_sx = sx; s_sy = sy;
+    /* depth: GS Z = C0.z / view depth (C0.z = core+0x188, 2^32 x near plane); the game tests
+     * Z GEQUAL. Pulled 2% towards the camera so lines on a surface aren't hidden by it. */
+    float zk = RDF(core + 0x188);
+    if (!(zk > 1.0e6f && zk < 1.0e13f)) zk = 4.2949673e10f;
+    s_zk = zk * 1.02f;
     return 1;
 }
 
@@ -95,7 +100,7 @@ static u32 f2u(float f)
 }
 
 static u32 s_lines;
-#define MAX_LINES 3600
+#define MAX_LINES 4800
 
 /* clip a view-space segment to the near plane, project, clip to a safe GS window, emit */
 static void seg(V3 a, V3 b)
@@ -106,8 +111,8 @@ static void seg(V3 a, V3 b)
         V3 c = { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, NEAR };
         if (a.z < NEAR) a = c; else b = c;
     }
-    float x0 = s_cx + s_sx * a.x / a.z, y0 = s_cy - s_sy * a.y / a.z;
-    float x1 = s_cx + s_sx * b.x / b.z, y1 = s_cy - s_sy * b.y / b.z;
+    float x0 = s_cx + s_sx * a.x / a.z, y0 = s_cy - s_sy * a.y / a.z, z0 = s_zk / a.z;
+    float x1 = s_cx + s_sx * b.x / b.z, y1 = s_cy - s_sy * b.y / b.z, z1 = s_zk / b.z;
     /* Liang-Barsky against [GS_LO, GS_HI] */
     float t0 = 0, t1 = 1, dx = x1 - x0, dy = y1 - y0;
     float p[4] = { -dx, dx, -dy, dy }, q[4] = { x0 - GS_LO, GS_HI - x0, y0 - GS_LO, GS_HI - y0 };
@@ -118,8 +123,9 @@ static void seg(V3 a, V3 b)
         else          { if (r < t0) return; if (r < t1) t1 = r; }
     }
     float ax = x0 + dx * t0, ay = y0 + dy * t0, bx = x0 + dx * t1, by = y0 + dy * t1;
+    float az = z0 + (z1 - z0) * t0, bz = z0 + (z1 - z0) * t1;   /* 1/depth is linear on screen */
     u32 X0 = f2u(ax * 16.0f), Y0 = f2u(ay * 16.0f), X1 = f2u(bx * 16.0f), Y1 = f2u(by * 16.0f);
-    q4(X0 | (Y0 << 16), 0xFFFFFFFF, X1 | (Y1 << 16), 0xFFFFFFFF);   /* XYZ2, XYZ2 (Z = max) */
+    q4(X0 | (Y0 << 16), f2u(az), X1 | (Y1 << 16), f2u(bz));     /* XYZ2, XYZ2 */
     s_lines++;
 }
 
@@ -154,26 +160,47 @@ static void end_group(void)
 }
 
 static u32 s_total;
+
+/* Is this instance shown and in view? Returns a distance bucket 0..31 (nearest first), or -1. */
+#define NBUCKETS 32
+static int cull_instance(u32 in, float range)
+{
+    u32 el = RD32(in + 0x48);
+    if (!valid(el)) return -1;
+    u32 evt = RD32(el);
+    float rad;
+    if (evt == SPHERE_VT) {
+        if (g_hitboxes == 2 || g_hitboxes == 3) return -1;
+        rad = RDF(el + 0x30);
+    } else if (evt == BOX_VT) {
+        u32 trig = RD32(in + 0x6C) != 0;
+        if (g_hitboxes == 4 || (g_hitboxes == 2 && trig) || (g_hitboxes == 3 && !trig)) return -1;
+        rad = RDF(el + 0x40);
+    } else return -1;
+    float s = RDF(in + 0x1C);
+    if (!(s > 0.001f && s < 1000.0f)) s = 1.0f;
+    rad *= s;
+    if (!(rad > 0 && rad < 100000.0f)) return -1;
+    V3 c; to_view(RDF(in + 0x10), RDF(in + 0x14), RDF(in + 0x18), &c);
+    if (c.z + rad < NEAR || c.z - rad > range) return -1;
+    float d2 = c.x * c.x + c.y * c.y + c.z * c.z;
+    if (d2 > (range + rad) * (range + rad)) return -1;
+    if (c.x - rad > c.z * 1.8f || -c.x - rad > c.z * 1.8f) return -1;
+    if (c.y - rad > c.z * 1.4f || -c.y - rad > c.z * 1.4f) return -1;
+    /* bucket by distance to the nearest point of the bounding sphere */
+    float d = c.z - rad;
+    if (d < 0) d = 0;
+    float b = d * (float)NBUCKETS / range;
+    return b >= (float)(NBUCKETS - 1) ? NBUCKETS - 1 : (int)f2u(b);
+}
+
 static void draw_instance(u32 in)
 {
     u32 el = RD32(in + 0x48);
-    if (!valid(el)) return;
     u32 evt = RD32(el);
     float px = RDF(in + 0x10), py = RDF(in + 0x14), pz = RDF(in + 0x18), s = RDF(in + 0x1C);
     if (!(s > 0.001f && s < 1000.0f)) s = 1.0f;
-    float rad = RDF(el + 0x40);
-    if (evt == SPHERE_VT) rad = RDF(el + 0x30);
-    else if (evt != BOX_VT) return;
-    rad *= s;
-    if (!(rad > 0 && rad < 100000.0f)) return;
-
-    /* cull by distance and view */
-    V3 c; to_view(px, py, pz, &c);
-    float range = g_hb_range > 0 ? g_hb_range : 400.0f;
-    if (c.z + rad < NEAR || c.z - rad > range) return;
-    if (c.x * c.x + c.y * c.y + c.z * c.z > (range + rad) * (range + rad)) return;
-    if (c.x - rad > c.z * 1.8f || -c.x - rad > c.z * 1.8f) return;
-    if (c.y - rad > c.z * 1.4f || -c.y - rad > c.z * 1.4f) return;
+    float rad = (evt == SPHERE_VT ? RDF(el + 0x30) : RDF(el + 0x40)) * s;
     if ((u32)(s_end - s_w) < 4 * 64) return;
     if (s_total > MAX_LINES) return;
 
@@ -213,6 +240,9 @@ static void draw_instance(u32 in)
 }
 
 static u32 s_frame;
+#define MAX_CAND 2048
+static u32 s_cand[MAX_CAND];
+static u8 s_bucket[MAX_CAND];
 
 void hitbox_tick(u32 st)
 {
@@ -238,12 +268,20 @@ void hitbox_tick(u32 st)
     ad(0x00, 1, 0, 0);                                          /* PRIM: line, flat, untextured */
     s_colour = 0; s_total = 0;
 
-    u32 p = RD32(db + DB_ALL), n = 0;
+    /* collect what's in view, then draw nearest first so any cut-off happens far away */
+    float range = g_hb_range > 0 ? g_hb_range : 400.0f;
+    u32 p = RD32(db + DB_ALL), n = 0, nc = 0;
     while (valid(p) && n < 20000) {
-        if (RD32(p) == INST_VT) draw_instance(p);
+        if (RD32(p) == INST_VT && nc < MAX_CAND) {
+            int b = cull_instance(p, range);
+            if (b >= 0) { s_cand[nc] = p; s_bucket[nc] = (u8)b; nc++; }
+        }
         p = RD32(p + INST_NEXT);
         n++;
     }
+    for (u32 b = 0; b < NBUCKETS && s_total <= MAX_LINES; b++)
+        for (u32 i = 0; i < nc; i++)
+            if (s_bucket[i] == b) draw_instance(s_cand[i]);
     ad(0x1A, 0, 0, 1);                                          /* back to PRMODE, end of packet */
 
     u32 qwc = (u32)((s_w - PTR(buf)) >> 2);

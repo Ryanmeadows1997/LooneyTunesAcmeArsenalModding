@@ -424,7 +424,7 @@ static const Item kLevels[] = {
 static const Item kVisual[] = {
     { "Hide HUD",            K_TOGGLE, T_HUD, 0, 0, 0, 0, "Health and power bars off, for clean screenshots" },
     { "Wireframe",           K_CHOICE, T_WIRE, 0, 0, 0, 0, "Left/Right: line style (world and characters)" },
-    { "Collision hitboxes",  K_TOGGLE, T_HITBOX, 0, 0, 0, 0, "Green solid, yellow triggers/zones, cyan spheres" },
+    { "Collision hitboxes",  K_CHOICE, T_HITBOX, 0, 0, 0, 0, "Green level, yellow triggers/zones, cyan spheres" },
     { "Hitbox range",        K_SLIDER, 0, &g_hb_range, 100, 3000, 100, "Left/Right to change (default 400)" },
 };
 
@@ -454,10 +454,14 @@ static u32 *toggle_ptr(u32 id)
     }
 }
 
+static const char *const kHitboxNames[] = { "OFF", "All", "Level", "Triggers", "Spheres" };
+static u32 choice_count(u32 id) { return id == T_HITBOX ? 5 : WF_STYLES; }
+static const char *choice_name(u32 id, u32 v) { return id == T_HITBOX ? kHitboxNames[v] : kWireNames[v]; }
+
 static void cycle(const Item *it, int dir)
 {
-    u32 *p = toggle_ptr(it->arg);
-    *p = (*p + WF_STYLES + dir) % WF_STYLES;
+    u32 *p = toggle_ptr(it->arg), n = choice_count(it->arg);
+    *p = (*p + n + dir) % n;
 }
 
 static void activate(const Item *it)
@@ -535,7 +539,7 @@ static void build_item_line(char *d, const Item *it, int selected)
         sapp(d, *toggle_ptr(it->arg) ? ": ON" : ": OFF");
     else if (it->kind == K_CHOICE) {
         d = sapp(d, ": < ");
-        d = sapp(d, kWireNames[*toggle_ptr(it->arg)]);
+        d = sapp(d, choice_name(it->arg, *toggle_ptr(it->arg)));
         sapp(d, " >");
     }
     else if (it->kind == K_SLIDER) {
