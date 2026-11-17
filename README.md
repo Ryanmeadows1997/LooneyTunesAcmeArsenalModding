@@ -41,10 +41,11 @@ Fully close and reboot the game after changing which patch is ticked.
 Tick **Mod menu (L3+R3)** in PCSX2's cheat list, then press **L3 + R3** (click both sticks) in game. The game doesn't see your buttons while the menu is open.
 
 - D-pad Up/Down to choose, **Cross** to select, D-pad Left/Right to switch page (or change a slider)
-- **PLAYER**: invincibility, weapon power up/down, kill/respawn, info overlay (position and speed)
-- **CAMERA**: free camera (sticks fly/look, R1/L1 up/down, R2 fast, L2 slow), field of view, draw distance, save/return to a camera spot
-- **LEVELS**: level warp (opens the developer level select from anywhere), Character Previewer
-- **VISUAL**: wireframe and collision display (in progress)
+- **PLAYER**: invincible, invisible, weapon power up/down, kill/respawn, info overlay (position, speed, free memory), level timer
+- **CAMERA**: free camera (sticks fly/look, R1/L1 up/down, R2 fast, L2 slow), field of view, draw distance, save/return to a camera spot, bring Bugs to the camera
+- **GAME**: pause, frame advance (also R3 while paused), game speed 10-400%
+- **LEVELS**: level warp (developer level select from anywhere), Character Previewer, unlock all levels, finish/restart level, profile level
+- **VISUAL**: hide HUD, wireframe (textured, white, or solid with white/black lines on top), collision hitboxes (all, level, triggers or spheres; depth-tested, with a range setting)
 
 Most of the player options call the developers' own debug handlers, which are still in the retail game. The menu also fixes the developer level select's layout so all 14 chapters are visible.
 
