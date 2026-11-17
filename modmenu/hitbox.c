@@ -10,8 +10,11 @@
  * frame is still being sent while the next one is built. */
 typedef unsigned int u32;
 typedef unsigned char u8;
+#ifndef RD32
 #define RD32(a) (*(volatile u32 *)(a))
 #define RDF(a)  (*(volatile float *)(a))
+#define PTR(a)  ((volatile u32 *)(a))
+#endif
 
 u32 gcall(u32 fn, u32 a0, u32 a1, u32 a2);
 u32 game_camera(u32 st);           /* freecam.c */
@@ -47,30 +50,27 @@ static void ad(u32 reg, u32 lo, u32 hi, u32 eop)
 }
 
 /* ---- camera ---- */
-static float s_px, s_py, s_pz, s_rx, s_ry, s_rz, s_ux, s_uy, s_uz, s_fx, s_fy, s_fz, s_sx, s_sy;
+static float s_px, s_py, s_pz, s_rx, s_ry, s_rz, s_ux, s_uy, s_uz, s_fx, s_fy, s_fz, s_sx, s_sy, s_cx, s_cy;
 #define NEAR 0.5f
 #define GS_LO 1024.0f
 #define GS_HI 3072.0f
 
-static float tanf_(float x)            /* small angles only (field of view) */
-{
-    float x2 = x * x;
-    float s = x * (1.0f + x2 * (-1.0f / 6 + x2 * (1.0f / 120 + x2 * (-1.0f / 5040))));
-    float c = 1.0f + x2 * (-0.5f + x2 * (1.0f / 24 + x2 * (-1.0f / 720 + x2 * (1.0f / 40320))));
-    return s / c;
-}
 
-static int setup_camera(u32 cam)
+/* Screen scale: the renderer keeps its VU1 projection constants in its own object. Screen
+ * position = centre + C0 * (S * view) / depth, with C0 = core+0x180 (192, -256 at 512x512)
+ * and S = core+0x190 (2, 2 at the default field of view). */
+static int setup_camera(u32 cam, u32 core)
 {
     s_px = RDF(cam + 0x70); s_py = RDF(cam + 0x74); s_pz = RDF(cam + 0x78);
     s_ux = RDF(cam + 0x80); s_uy = RDF(cam + 0x84); s_uz = RDF(cam + 0x88);
     s_fx = RDF(cam + 0x90); s_fy = RDF(cam + 0x94); s_fz = RDF(cam + 0x98);
     s_rx = RDF(cam + 0xA0); s_ry = RDF(cam + 0xA4); s_rz = RDF(cam + 0xA8);
-    float fov = RDF(cam + 0xB0), ia = RDF(cam + 0xB8);     /* half-angle (radians), 1/aspect */
-    if (!(fov > 0.05f && fov < 1.5f)) return 0;
-    if (!(ia > 0.3f && ia < 2.0f)) ia = 0.75f;
-    s_sy = 256.0f / tanf_(fov);        /* matches the renderer's VU1 constants (192, -256 at 45 deg) */
-    s_sx = s_sy * ia;
+    float sx = RDF(core + 0x180) * RDF(core + 0x190);
+    float sy = -RDF(core + 0x184) * RDF(core + 0x194);
+    s_cx = RDF(core + 0x170); s_cy = RDF(core + 0x174);
+    if (!(sx > 20.0f && sx < 20000.0f && sy > 20.0f && sy < 20000.0f)) { sx = 384.0f; sy = 512.0f; }
+    if (!(s_cx > 1500.0f && s_cx < 2600.0f && s_cy > 1500.0f && s_cy < 2600.0f)) { s_cx = 2048.0f; s_cy = 2048.0f; }
+    s_sx = sx; s_sy = sy;
     return 1;
 }
 
@@ -106,8 +106,8 @@ static void seg(V3 a, V3 b)
         V3 c = { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, NEAR };
         if (a.z < NEAR) a = c; else b = c;
     }
-    float x0 = 2048.0f + s_sx * a.x / a.z, y0 = 2048.0f - s_sy * a.y / a.z;
-    float x1 = 2048.0f + s_sx * b.x / b.z, y1 = 2048.0f - s_sy * b.y / b.z;
+    float x0 = s_cx + s_sx * a.x / a.z, y0 = s_cy - s_sy * a.y / a.z;
+    float x1 = s_cx + s_sx * b.x / b.z, y1 = s_cy - s_sy * b.y / b.z;
     /* Liang-Barsky against [GS_LO, GS_HI] */
     float t0 = 0, t1 = 1, dx = x1 - x0, dy = y1 - y0;
     float p[4] = { -dx, dx, -dy, dy }, q[4] = { x0 - GS_LO, GS_HI - x0, y0 - GS_LO, GS_HI - y0 };
@@ -223,16 +223,16 @@ void hitbox_tick(u32 st)
     if (!valid(world) || RD32(world) != WORLD_VT) return;
     u32 db = RD32(world + WORLD_DB);
     if (!valid(db)) return;
-    u32 cam = game_camera(st);
-    if (!cam || !setup_camera(cam)) return;
     u32 core = RD32(RENDER_CORE);
     if (!valid(core) || RD32(core) != RENDER_VT) return;
+    u32 cam = game_camera(st);
+    if (!cam || !setup_camera(cam, core)) return;
     u32 tp = RD32(core + 0xC), tend = RD32(core + 0x8);
     if ((tp & 0x0FFFFFFF) + 16 > (tend & 0x0FFFFFFF) || (tp & 15)) return;
 
     u32 buf = (s_frame++ & 1) ? HB_BUF1 : HB_BUF0;
-    s_w = (volatile u32 *)buf;
-    s_end = (volatile u32 *)(buf + HB_QWORDS * 16 - 16 * 4);   /* room for the closing packet */
+    s_w = PTR(buf);
+    s_end = PTR(buf + HB_QWORDS * 16 - 16 * 4);   /* room for the closing packet */
     s_w += 4;                                                   /* VIF codes, filled in below */
     ad(0x1A, 1, 0, 0);                                          /* PRMODECONT: attributes from PRIM */
     ad(0x00, 1, 0, 0);                                          /* PRIM: line, flat, untextured */
@@ -246,15 +246,15 @@ void hitbox_tick(u32 st)
     }
     ad(0x1A, 0, 0, 1);                                          /* back to PRMODE, end of packet */
 
-    u32 qwc = ((u32)s_w - buf) >> 4;
-    volatile u32 *v = (volatile u32 *)buf;
+    u32 qwc = (u32)((s_w - PTR(buf)) >> 2);
+    volatile u32 *v = PTR(buf);
     v[0] = 0x11000000;                 /* FLUSH: wait for VU1 and PATH1 */
     v[1] = 0; v[2] = 0;
     v[3] = 0x50000000 | (qwc - 1);     /* DIRECT */
     gcall(SYNC_DCACHE, buf, buf + qwc * 16 - 1, 0);
 
     /* REF tag into this frame's chain (the renderer writes tags through an uncached pointer) */
-    volatile u32 *t = (volatile u32 *)tp;
+    volatile u32 *t = PTR(tp);
     t[0] = 0x30000000 | qwc; t[1] = buf; t[2] = 0; t[3] = 0;
     RD32(core + 0xC) = tp + 16;
 }
