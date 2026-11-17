@@ -148,8 +148,9 @@ static void begin_group(u32 rgba)
 static void end_group(void)
 {
     if (!s_lines) { s_w = s_tag; return; }
-    /* NLOOP = lines, PRE, PRIM = 1 (line), FLG = 1 (REGLIST), NREG = 2; REGS = XYZ2, XYZ2 */
-    s_tag[0] = s_lines; s_tag[1] = 0x24004000 | (1 << 15) ; s_tag[2] = 0x55; s_tag[3] = 0;
+    /* NLOOP = lines, FLG = 1 (REGLIST), NREG = 2; REGS = XYZ2, XYZ2. The tag's PRE/PRIM only
+     * work in PACKED mode, so PRIM is set by the A+D write at the start of the packet. */
+    s_tag[0] = s_lines; s_tag[1] = 0x24000000; s_tag[2] = 0x55; s_tag[3] = 0;
 }
 
 static u32 s_total;
@@ -234,6 +235,7 @@ void hitbox_tick(u32 st)
     s_end = (volatile u32 *)(buf + HB_QWORDS * 16 - 16 * 4);   /* room for the closing packet */
     s_w += 4;                                                   /* VIF codes, filled in below */
     ad(0x1A, 1, 0, 0);                                          /* PRMODECONT: attributes from PRIM */
+    ad(0x00, 1, 0, 0);                                          /* PRIM: line, flat, untextured */
     s_colour = 0; s_total = 0;
 
     u32 p = RD32(db + DB_ALL), n = 0;
