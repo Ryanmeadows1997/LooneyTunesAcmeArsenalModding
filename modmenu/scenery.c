@@ -72,8 +72,6 @@ static u32 level_db(u32 st, u32 *world)
 u32 game_camera(u32 st);           /* freecam.c */
 char g_scenery_msg[48];            /* shown on the menu's status line while this is on */
 
-    *d = 0;
-}
 static char *app(char *d, const char *s) { while (*s) *d++ = *s++; *d = 0; return d; }
 static char *dec(char *d, u32 v)
 {
