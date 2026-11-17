@@ -58,6 +58,7 @@ u32 pad_raw(u8 *sticks)
 extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live;
 extern u32 g_hitboxes, g_all_scenery;
 void scenery_tick(u32 st);
+extern char g_scenery_msg[];
 extern float g_hb_range;
 void hitbox_tick(u32 st);
 extern float g_fov_deg, g_far;          /* 0 = leave the game's value */
@@ -904,7 +905,7 @@ void menu_tick(void *sys)
         if (i < pg->count) build_item_line(g_line[2 + i], &pg->items[i], i == g_cursor);
         else g_line[2 + i][0] = 0;
     }
-    scpy(g_line[NLINES - 2], g_status ? g_status : it->help);
+    scpy(g_line[NLINES - 2], g_status ? g_status : (g_all_scenery && g_scenery_msg[0]) ? g_scenery_msg : it->help);
     scpy(g_line[NLINES - 1], "X select  Left/Right page  L3+R3 close");
 
     for (u32 i = 0; i < NLINES; i++) {
