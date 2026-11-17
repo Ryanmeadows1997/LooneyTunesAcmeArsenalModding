@@ -104,3 +104,11 @@ Active camera: `game+0x30` vtable `+0x48` (player index) -> camera. Camera `+0x7
 - Only `C.F`, `C.EQ`, `C.LT`, `C.LE` exist; clang's unordered compares (`c.ult.s` etc.) are rewritten to the ordered forms.
 - `SQRT.S` reads its operand from the `ft` field, not `fs`; the build moves it.
 - No `trunc.w.s`; float-to-int conversion is done from the bit pattern in C.
+
+### Wireframe (VISUAL page)
+- **Model batches:** VIF streams in RAM. Each batch's UNPACK (VIF 0x6C) starts with the vertex GIF tag. Only two kinds are used: triangle lists `9001C000 / 12512512` (NREG 9) and strips `30024000 / 512` (NREG 3). Line styles swap PRIM to 2 and keep a marker in the tag's unused bits 32-45.
+- **Materials:** GS A+D packets in RAM: tag `00000001 60000000 00EEEEEE`, then PRMODE (0x1B), CLAMP (0x08), TEST (0x47), ALPHA (0x42), LABEL (0x62), FBA (0x4A). PRMODECONT.AC = 0, so the tag's PRIM gives only the primitive type.
+- **Microprograms:** in `.vudata` as MPG packets: 0x495700 and 0x4978C0 (skinned/strips, packet in vi4), 0x4964F0 and 0x4986B0 (static triangle lists, packet in vi8), and 0x499BA0. They're uploaded on demand; the slots are registered at 0x32DB40. All of them end below micro address 0x294.
+- **Packet layout:** `[material 7 qw][vertex tag][vertices][EOP tag]`. VU1 qword 3 is an empty EOP tag; the game kicks it to wait for the previous XGKICK.
+- **Lines on top:** `modmenu/vu/overlay.py` assembles a routine at micro 0x2A0, written via the EE mapping at 0x11008000. The batch-end `b` (whose delay slot is the XGKICK) is pointed at it. Sites: 0x4964F0 prog 0xC9/0x1DB, 0x4986B0 prog 0xDA/0x1FA, and both skinned programs at 0xF9/0x1B4. LOI's value is only usable from the next instruction.
+- **Not hooked yet:** the clipping paths in the static programs (kicks at 0x126-0x12F and 0x182/0x183 in 0x4964F0).
