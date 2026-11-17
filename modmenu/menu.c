@@ -56,7 +56,8 @@ u32 pad_raw(u8 *sticks)
 
 /* shared with freecam.c */
 extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live;
-extern u32 g_hitboxes;
+extern u32 g_hitboxes, g_all_scenery;
+void scenery_tick(u32 st);
 extern float g_hb_range;
 void hitbox_tick(u32 st);
 extern float g_fov_deg, g_far;          /* 0 = leave the game's value */
@@ -389,7 +390,7 @@ typedef struct {
     const char *help;
 } Item;
 
-enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE, T_HUD, T_TIMER, T_WIRE, T_HITBOX };
+enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE, T_HUD, T_TIMER, T_WIRE, T_HITBOX, T_SCENERY };
 
 static const Item kPlayer[] = {
     { "Invincible",         K_TOGGLE, T_INV,   0, 0, 0, 0, "Bugs takes no damage" },
@@ -402,6 +403,7 @@ static const Item kPlayer[] = {
 };
 static const Item kCamera[] = {
     { "Free camera",        K_TOGGLE, T_FREECAM, 0, 0, 0, 0, "Sticks fly/look, R1/L1 up/down, R2 fast, L2 slow" },
+    { "Show all scenery",    K_TOGGLE, T_SCENERY, 0, 0, 0, 0, "Switch on scenery the level has hidden" },
     { "Field of view",      K_SLIDER, 0, &g_fov_deg, 20, 120, 5,  "Left/Right to change (game = 45)" },
     { "Draw distance",      K_SLIDER, 0, &g_far,     500, 20000, 500, "Left/Right to change (game = 1000)" },
     { "Save camera spot",   K_ACTION, 100, 0, 0, 0, 0, "Free camera: remember this view" },
@@ -450,6 +452,7 @@ static u32 *toggle_ptr(u32 id)
     case T_TIMER: return &g_timer_on;
     case T_WIRE: return &g_wireframe;
     case T_HITBOX: return &g_hitboxes;
+    case T_SCENERY: return &g_all_scenery;
     default: return &g_info_on;
     }
 }
@@ -668,6 +671,7 @@ void mgr_tick(u32 mgr)
 {
     if (g_unlock_levels) unlock_levels(mgr);
     wireframe_tick();
+    scenery_tick(g_last_play);
     u32 act = g_action;
     u32 ent = g_action_entity;
     g_action = 0;

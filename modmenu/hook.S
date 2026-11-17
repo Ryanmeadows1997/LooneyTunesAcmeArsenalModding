@@ -217,3 +217,14 @@ hud_hook:
         nop
 3:      jr    $ra
         nop
+
+# Instance setEnabled(db, inst, on) at 0x2FE828: tell scenery.c the game set this one itself.
+        .globl hook_enable
+hook_enable:
+        SAVEALL
+        jal   scenery_on_set
+        move  $a0, $a1
+        RESTOREALL
+        addiu $sp, $sp, -0xA0
+        j     0x2FE830
+        move  $a3, $a1
