@@ -56,6 +56,9 @@ u32 pad_raw(u8 *sticks)
 
 /* shared with freecam.c */
 extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live;
+extern u32 g_hitboxes;
+extern float g_hb_range;
+void hitbox_tick(u32 st);
 extern float g_fov_deg, g_far;          /* 0 = leave the game's value */
 void freecam_bookmark(int load);
 int freecam_pos(float *out);
@@ -386,7 +389,7 @@ typedef struct {
     const char *help;
 } Item;
 
-enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE, T_HUD, T_TIMER, T_WIRE };
+enum { T_INV, T_FREECAM, T_INFO, T_INVIS, T_UNLOCK, T_PAUSE, T_HUD, T_TIMER, T_WIRE, T_HITBOX };
 
 static const Item kPlayer[] = {
     { "Invincible",         K_TOGGLE, T_INV,   0, 0, 0, 0, "Bugs takes no damage" },
@@ -421,7 +424,8 @@ static const Item kLevels[] = {
 static const Item kVisual[] = {
     { "Hide HUD",            K_TOGGLE, T_HUD, 0, 0, 0, 0, "Health and power bars off, for clean screenshots" },
     { "Wireframe",           K_CHOICE, T_WIRE, 0, 0, 0, 0, "Left/Right: line style (world and characters)" },
-    { "Collision hitboxes",  K_ACTION, 200, 0, 0, 0, 0, "Coming soon" },
+    { "Collision hitboxes",  K_TOGGLE, T_HITBOX, 0, 0, 0, 0, "Green solid, yellow triggers/zones, cyan spheres" },
+    { "Hitbox range",        K_SLIDER, 0, &g_hb_range, 100, 3000, 100, "Left/Right to change (default 400)" },
 };
 
 typedef struct { const char *name; const Item *items; u32 count; } Page;
@@ -445,6 +449,7 @@ static u32 *toggle_ptr(u32 id)
     case T_HUD: return &g_hide_hud;
     case T_TIMER: return &g_timer_on;
     case T_WIRE: return &g_wireframe;
+    case T_HITBOX: return &g_hitboxes;
     default: return &g_info_on;
     }
 }
@@ -796,6 +801,7 @@ void menu_tick(void *sys)
         u32 st = g_state, pl = 0, ent = 0;
         g_state = 0;
         g_last_play = valid(st) ? st : 0;
+        hitbox_tick(g_last_play);
         g_fc_live = g_fc_active;     /* free camera only blocks the pad while it's actually live */
         g_fc_active = 0;
         if (valid(st)) {

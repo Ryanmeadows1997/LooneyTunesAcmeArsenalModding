@@ -79,6 +79,8 @@ static u32 find_camera(u32 st)
     return cam;
 }
 
+u32 game_camera(u32 st) { return find_camera(st); }
+
 static u32 s_init;
 static float s_x, s_y, s_z, s_yaw, s_pitch;
 

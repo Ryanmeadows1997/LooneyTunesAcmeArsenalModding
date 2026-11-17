@@ -8,7 +8,8 @@ ELF="${ACME_ELF:-/mnt/user-data/uploads/Looney Tunes - Acme Arsenal (Europe) (En
 if [ -f "$ELF" ]; then python3 vu/overlay.py "$ELF"; fi
 clang $CF -fno-math-errno -c menu.c -o menu.o
 clang $CF -fno-math-errno -c freecam.c -o freecam.o
-ld.lld -T link.ld hook.o menu.o freecam.o -o menu.elf
+clang $CF -fno-math-errno -c hitbox.c -o hitbox.o
+ld.lld -T link.ld hook.o menu.o freecam.o hitbox.o -o menu.elf
 llvm-objcopy -O binary --only-section=.text --only-section=.rodata menu.elf menu.bin
 python3 mkpnach.py
 # level select layout fix
