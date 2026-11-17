@@ -1,11 +1,15 @@
-/* Show all scenery: switches on every visual instance the game has switched off.
+/* Show all scenery: shows every visual instance the level is hiding.
  *
- * Levels hide whole groups of scenery until Bugs reaches them (trigger zones toggle layers),
- * which is why the free camera finds parts of the level missing. Instances are switched on and
- * off through one function, setEnabled(scene db, instance, on) at 0x2FE828; bit 1 of
- * instance+4 holds the result. While this is on, every visual instance (kVisualInstance, vtable
- * 0x49353C) that is off gets switched on, and remembered. Switching it off again puts those
- * back, except any the game itself has set since (a hook on 0x2FE828 forgets them). */
+ * A visual instance (kVisualInstance, vtable 0x49353C) has a visual state index at +0x70: -1
+ * means hidden, 0..n-1 picks one of its element's n looks (element +0x28). The level hides
+ * scenery by setting -1 until Bugs gets near (which is why the free camera finds parts of the
+ * level missing). setState(inst, _, state) at 0x2F9980 (its state interface's +0x30 method)
+ * stores the index and switches the instance on or off to match.
+ *
+ * Switching an instance on directly, with its state still -1, crashes the game. So this calls
+ * setState(.., 0) on hidden instances, nearest the camera first, and remembers them; switching
+ * it off sets them back to -1. Any the game sets itself in the meantime are forgotten (a hook
+ * on setEnabled at 0x2FE828, which every state change goes through), so its choice stands. */
 typedef unsigned int u32;
 #define RD32(a) (*(volatile u32 *)(a))
 
@@ -19,8 +23,8 @@ u32 g_all_scenery;                 /* menu toggle */
 #define DB_ALL      0xA8
 #define INST_NEXT   0x40
 #define VISUAL_VT   0x49353C
-#define INST_ENABLE  0x2FB0E0
-#define INST_DISABLE 0x2FB118
+#define VIS_SET_STATE 0x2F9980
+#define VIS_STATE(p)  (*(volatile short *)((p) + 0x70))
 
 #define MAX_FORCED 3000
 static u32 s_forced[MAX_FORCED];
@@ -65,10 +69,7 @@ static char *dec(char *d, u32 v)
     *d = 0; return d;
 }
 
-static u32 s_frame;
-
-/* Diagnostic pace: one instance every 4 frames, nearest to the camera first, with its address
- * on the status line so a crash shows which one caused it. */
+#define PER_FRAME 8
 void scenery_tick(u32 st)
 {
     u32 world = 0, db = level_db(st, &world);
@@ -76,22 +77,19 @@ void scenery_tick(u32 st)
     if (!db) return;
 
     if (g_all_scenery) {
-        if ((s_frame++ & 3) || s_n >= MAX_FORCED) return;
+        for (u32 k = 0; k < PER_FRAME && s_n < MAX_FORCED; k++) {
         u32 cam = game_camera(st);
         if (!cam) return;
         float cx = *(volatile float *)(cam + 0x70), cy = *(volatile float *)(cam + 0x74), cz = *(volatile float *)(cam + 0x78);
         u32 p = RD32(db + DB_ALL), n = 0, best = 0, left = 0;
         float bd = 0;
         while (valid(p) && n < 20000) {
-            if (RD32(p) == VISUAL_VT && !(RD32(p + 4) & 2)) {
-                int seen = 0;
-                for (u32 i = 0; i < s_n; i++) if (s_forced[i] == p) { seen = 1; break; }
-                if (!seen) {
-                    float dx = *(volatile float *)(p + 0x10) - cx, dy = *(volatile float *)(p + 0x14) - cy, dz = *(volatile float *)(p + 0x18) - cz;
-                    float d = dx * dx + dy * dy + dz * dz;
-                    if (!best || d < bd) { best = p; bd = d; }
-                    left++;
-                }
+            if (RD32(p) == VISUAL_VT && VIS_STATE(p) == -1 && !(RD32(p + 4) & 2)) {
+                /* (once set, its state is 0, so it isn't picked again) */
+                float dx = *(volatile float *)(p + 0x10) - cx, dy = *(volatile float *)(p + 0x14) - cy, dz = *(volatile float *)(p + 0x18) - cz;
+                float d = dx * dx + dy * dy + dz * dz;
+                if (!best || d < bd) { best = p; bd = d; }
+                left++;
             }
             p = RD32(p + INST_NEXT);
             n++;
@@ -105,14 +103,15 @@ void scenery_tick(u32 st)
         hex8(m, best);
         s_forced[s_n++] = best;
         s_busy = 1;
-        gcall(INST_ENABLE, best, 0, 0);
+        gcall(VIS_SET_STATE, best, 0, 0);
         s_busy = 0;
+        }
     } else if (s_n) {
         for (u32 i = 0; i < s_n; i++) {
             u32 p = s_forced[i];
-            if (valid(p) && RD32(p) == VISUAL_VT && (RD32(p + 4) & 2)) {
+            if (valid(p) && RD32(p) == VISUAL_VT && VIS_STATE(p) == 0) {
                 s_busy = 1;
-                gcall(INST_DISABLE, p, 0, 0);
+                gcall(VIS_SET_STATE, p, 0, 0xFFFFFFFF);
                 s_busy = 0;
             }
         }
