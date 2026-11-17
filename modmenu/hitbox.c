@@ -239,6 +239,21 @@ static void draw_instance(u32 in)
     end_group();
 }
 
+/* Does this chain entry draw into an off-screen buffer? (A REF tag whose data writes FRAME_1
+ * with a width other than the 512-pixel frame: the bloom/post-processing passes.) */
+static int tag_offscreen(u32 t)
+{
+    u32 lo = RD32(t), d = RD32(t + 4);
+    if ((lo >> 28) != 3 || !valid(d)) return 0;
+    u32 n = lo & 0xFFFF;
+    if (n > 0x80) n = 0x80;
+    for (u32 k = 0; k < n; k++) {
+        u32 q = d + k * 16;
+        if (RD32(q + 8) == 0x4C && RD32(q + 12) == 0 && ((RD32(q) >> 16) & 0x3F) != 8) return 1;
+    }
+    return 0;
+}
+
 static u32 s_frame;
 #define MAX_CAND 2048
 static u32 s_cand[MAX_CAND];
@@ -266,6 +281,7 @@ void hitbox_tick(u32 st)
     s_w += 4;                                                   /* VIF codes, filled in below */
     ad(0x1A, 1, 0, 0);                                          /* PRMODECONT: attributes from PRIM */
     ad(0x00, 1, 0, 0);                                          /* PRIM: line, flat, untextured */
+    ad(0x47, 0x50000, 0, 0);                                    /* TEST: depth GEQUAL, no alpha test (the next pass sets its own) */
     s_colour = 0; s_total = 0;
 
     /* collect what's in view, then draw nearest first so any cut-off happens far away */
@@ -291,8 +307,20 @@ void hitbox_tick(u32 st)
     v[3] = 0x50000000 | (qwc - 1);     /* DIRECT */
     gcall(SYNC_DCACHE, buf, buf + qwc * 16 - 1, 0);
 
-    /* REF tag into this frame's chain (the renderer writes tags through an uncached pointer) */
-    volatile u32 *t = PTR(tp);
+    /* Our REF tag goes into this frame's chain just before the post-processing passes: those
+     * draw full-screen and leave the depth buffer useless for testing against. Going back
+     * from the end, find the first run of off-screen passes and insert before it. */
+    u32 tstart = RD32(core + 0x4), ins = tp, found = 0;
+    for (u32 k = 1; k <= 64; k++) {
+        u32 t = tp - 16 * k;
+        if (t < tstart) break;
+        if (tag_offscreen(t)) { ins = t; found = 1; }
+        else if (found) break;
+    }
+    for (u32 t = tp; t > ins; t -= 16) {          /* shift the later tags up one slot */
+        RD32(t) = RD32(t - 16); RD32(t + 4) = RD32(t - 12); RD32(t + 8) = RD32(t - 8); RD32(t + 12) = RD32(t - 4);
+    }
+    volatile u32 *t = PTR(ins);
     t[0] = 0x30000000 | qwc; t[1] = buf; t[2] = 0; t[3] = 0;
     RD32(core + 0xC) = tp + 16;
 }
