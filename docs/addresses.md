@@ -112,3 +112,10 @@ Active camera: `game+0x30` vtable `+0x48` (player index) -> camera. Camera `+0x7
 - **Packet layout:** `[material 7 qw][vertex tag][vertices][EOP tag]`. VU1 qword 3 is an empty EOP tag; the game kicks it to wait for the previous XGKICK.
 - **Lines on top:** `modmenu/vu/overlay.py` assembles a routine at micro 0x2A0, written via the EE mapping at 0x11008000. The batch-end `b` (whose delay slot is the XGKICK) is pointed at it. Sites: 0x4964F0 prog 0xC9/0x1DB, 0x4986B0 prog 0xDA/0x1FA, and both skinned programs at 0xF9/0x1B4. LOI's value is only usable from the next instruction.
 - **Not hooked yet:** the clipping paths in the static programs (kicks at 0x126-0x12F and 0x182/0x183 in 0x4964F0).
+
+### Collision hitboxes (VISUAL page)
+- **World:** play state +0x30 → game; game +0x4FC → world (vtable 0x493A14). World +0x2C → scene database, whose list of every instance starts at +0xA8 and is linked through instance +0x40.
+- **kCollisionInstance (vtable 0x492290):** +0x10 position, +0x1C uniform scale, +0x20 rotation quaternion (x, y, z, w), +0x48 element, +0x68 collider mask, +0x6C collides-with mask (non-zero for triggers and zones).
+- **Elements:** box (vtable 0x493F3C): half extents at +0x30, bounding radius at +0x40. Sphere (vtable 0x492330): radius at +0x30.
+- **Renderer** (*0x470158, vtable 0x494D90): VIF1 tag list write pointer at +0xC; data write pointer at +0x18. Projection constants: centre at +0x170, C0 at +0x180 (192, -256, Z scale), S at +0x190 (2, 2). Screen = centre + C0·S·view/depth. GS Z = C0.z/depth, tested GEQUAL against a Z32 buffer.
+- **Drawing:** the overlay is a REF tag pointing at the mod's own FLUSH + DIRECT packet. That packet sets PRMODECONT, PRIM (line) and TEST, then sends lines in REGLIST mode. The tag is inserted before the frame's trailing bloom passes (FRAME writes with width != 512), because after those the depth buffer no longer holds the scene. The GIF tag's PRE/PRIM fields only work in PACKED mode.
