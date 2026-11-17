@@ -59,6 +59,7 @@ extern u32 g_state, g_freecam, g_block_input, g_fc_active, g_fc_live;
 extern u32 g_hitboxes, g_all_scenery;
 void scenery_tick(u32 st);
 void scenery_measure(void);
+void scenery_clear(void);
 extern char g_scenery_msg[];
 extern float g_hb_range;
 void hitbox_tick(u32 st);
@@ -697,7 +698,7 @@ void mgr_tick(u32 mgr)
     case ACT_INVIS_OFF:  G(PL_CHEAT_INVISIBLE, ent, 0, 0); g_invis_entity = 0; break;
     case ACT_TELEPORT: {
         float v[3];
-        if (freecam_pos(v)) { v[2] -= 10.0f; teleport_entity(ent, v); }
+        if (freecam_pos(v)) { v[2] -= 10.0f; scenery_clear(); teleport_entity(ent, v); }
         break;
     }
     }

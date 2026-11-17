@@ -70,6 +70,7 @@ static u32 level_db(u32 st, u32 *world)
 }
 
 u32 game_camera(u32 st);           /* freecam.c */
+int freecam_pos(float *out);       /* freecam.c: the free camera's position, if it's on */
 char g_scenery_msg[48];            /* shown on the menu's status line while this is on */
 
 static char *app(char *d, const char *s) { while (*s) *d++ = *s++; *d = 0; return d; }
@@ -90,8 +91,8 @@ static char *dec(char *d, u32 v)
  * farthest first, when it gets high. */
 #define RENDER_CORE 0x470158
 #define RENDER_VT   0x494D90
-#define FILL_HIGH   55          /* % : start hiding */
-#define FILL_LOW    40          /* % : room to show more */
+#define FILL_HIGH   45          /* % : start hiding (headroom for the game showing a section of its own) */
+#define FILL_LOW    30          /* % : room to show more */
 u32 g_render_fill;              /* % of the fuller buffer, last frame */
 static u32 s_limit = MAX_FORCED;
 
@@ -133,6 +134,14 @@ static void trim(u32 n, float cx, float cy, float cz)
         s_n--; s_forced[far] = s_forced[s_n]; s_fn[far] = s_fn[s_n];
     }
 }
+/* Hide everything we showed (used before moving Bugs, which makes the game show and hide
+ * sections of its own); the next frames bring it back, nearest the camera first. */
+void scenery_clear(void)
+{
+    for (u32 i = 0; i < s_n; i++) unshow(i);
+    s_n = 0;
+}
+
 void scenery_tick(u32 st)
 {
     u32 world = 0, db = level_db(st, &world);
@@ -140,11 +149,18 @@ void scenery_tick(u32 st)
     if (!db) return;
 
     if (g_all_scenery) {
-        u32 cam = game_camera(st);
-        if (!cam) return;
-        float cx = *(volatile float *)(cam + 0x70), cy = *(volatile float *)(cam + 0x74), cz = *(volatile float *)(cam + 0x78);
+        /* Measure from the free camera when it's on. (The game camera object only holds the
+         * free camera's position while the frame is drawn; at this point in the frame it is
+         * back to the game's own camera behind Bugs.) */
+        float fc[3], cx, cy, cz;
+        if (freecam_pos(fc)) { cx = fc[0]; cy = fc[1]; cz = fc[2]; }
+        else {
+            u32 cam = game_camera(st);
+            if (!cam) return;
+            cx = *(volatile float *)(cam + 0x70); cy = *(volatile float *)(cam + 0x74); cz = *(volatile float *)(cam + 0x78);
+        }
         if (g_render_fill >= FILL_HIGH) {               /* too much: drop the farthest, lower the cap */
-            trim(16, cx, cy, cz);
+            trim(64, cx, cy, cz);
             s_limit = s_n;
         } else if (g_render_fill < FILL_LOW && s_limit < MAX_FORCED) {
             s_limit += PER_FRAME;                       /* room again: let the cap creep back up */
