@@ -9,7 +9,11 @@
  * Switching an instance on directly, with its state still -1, crashes the game. So this calls
  * setState(.., 0) on hidden instances, nearest the camera first, and remembers them; switching
  * it off sets them back to -1. Any the game sets itself in the meantime are forgotten (a hook
- * on setEnabled at 0x2FE828, which every state change goes through), so its choice stands. */
+ * on setEnabled at 0x2FE828, which every state change goes through), so its choice stands.
+ *
+ * Animated scenery (vtables 0x491FC8 and 0x491BC8) has no stored index: its setState at
+ * 0x2C7FF0 just switches it off for -1 (or an index past its element's count at +0x160) and
+ * on otherwise. Those are shown when switched off, and set back to -1 afterwards. */
 typedef unsigned int u32;
 #define RD32(a) (*(volatile u32 *)(a))
 
@@ -25,9 +29,22 @@ u32 g_all_scenery;                 /* menu toggle */
 #define VISUAL_VT   0x49353C
 #define VIS_SET_STATE 0x2F9980
 #define VIS_STATE(p)  (*(volatile short *)((p) + 0x70))
+#define ANIM_VT1      0x491FC8
+#define ANIM_VT2      0x491BC8
+#define ANIM_SET_STATE 0x2C7FF0
+
+/* hidden scenery we can show: returns its setState function, or 0 */
+static u32 hidden_kind(u32 p)
+{
+    u32 vt = RD32(p);
+    if (RD32(p + 4) & 2) return 0;                         /* already on */
+    if (vt == VISUAL_VT) return VIS_STATE(p) == -1 ? VIS_SET_STATE : 0;
+    if (vt == ANIM_VT1 || vt == ANIM_VT2) return ANIM_SET_STATE;
+    return 0;
+}
 
 #define MAX_FORCED 3000
-static u32 s_forced[MAX_FORCED];
+static u32 s_forced[MAX_FORCED], s_fn[MAX_FORCED];
 static u32 s_n, s_busy, s_world;
 
 static u32 valid(u32 p) { return p >= 0x100000 && p < 0x2000000 && !(p & 3); }
@@ -37,7 +54,7 @@ void scenery_on_set(u32 inst)
 {
     if (s_busy) return;
     for (u32 i = 0; i < s_n; i++)
-        if (s_forced[i] == inst) { s_forced[i] = s_forced[--s_n]; return; }
+        if (s_forced[i] == inst) { s_n--; s_forced[i] = s_forced[s_n]; s_fn[i] = s_fn[s_n]; return; }
 }
 
 static u32 level_db(u32 st, u32 *world)
@@ -84,8 +101,8 @@ void scenery_tick(u32 st)
         u32 p = RD32(db + DB_ALL), n = 0, best = 0, left = 0;
         float bd = 0;
         while (valid(p) && n < 20000) {
-            if (RD32(p) == VISUAL_VT && VIS_STATE(p) == -1 && !(RD32(p + 4) & 2)) {
-                /* (once set, its state is 0, so it isn't picked again) */
+            if (hidden_kind(p)) {
+                /* (once shown it's switched on, so it isn't picked again) */
                 float dx = *(volatile float *)(p + 0x10) - cx, dy = *(volatile float *)(p + 0x14) - cy, dz = *(volatile float *)(p + 0x18) - cz;
                 float d = dx * dx + dy * dy + dz * dz;
                 if (!best || d < bd) { best = p; bd = d; }
@@ -101,17 +118,21 @@ void scenery_tick(u32 st)
         if (!best) return;
         m = app(m, ", now ");
         hex8(m, best);
-        s_forced[s_n++] = best;
+        u32 fn = hidden_kind(best);
+        s_forced[s_n] = best; s_fn[s_n++] = fn;
         s_busy = 1;
-        gcall(VIS_SET_STATE, best, 0, 0);
+        gcall(fn, best, 0, 0);
         s_busy = 0;
         }
     } else if (s_n) {
         for (u32 i = 0; i < s_n; i++) {
             u32 p = s_forced[i];
-            if (valid(p) && RD32(p) == VISUAL_VT && VIS_STATE(p) == 0) {
+            u32 fn = s_fn[i], vt = valid(p) ? RD32(p) : 0;
+            int ours = fn == VIS_SET_STATE ? (vt == VISUAL_VT && VIS_STATE(p) == 0)
+                                           : ((vt == ANIM_VT1 || vt == ANIM_VT2) && (RD32(p + 4) & 2));
+            if (ours) {
                 s_busy = 1;
-                gcall(VIS_SET_STATE, p, 0, 0xFFFFFFFF);
+                gcall(fn, p, 0, 0xFFFFFFFF);
                 s_busy = 0;
             }
         }
